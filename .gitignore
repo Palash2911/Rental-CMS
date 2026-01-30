@@ -1,0 +1,35 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Prisma
+apps/backend/prisma/migrations/
+apps/backend/prisma/dev.db
+
+# Docker
+docker/postgres_data
+docker/redis_data
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
