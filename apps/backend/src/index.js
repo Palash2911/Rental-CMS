@@ -1,8 +1,14 @@
 import { createYoga } from "graphql-yoga";
 import { createServer } from "node:http";
 import { schema } from "./graphql/schema.js";
+import prisma from "./prisma.js";
 
-const yoga = createYoga({ schema });
+const yoga = createYoga({
+  schema,
+  context: () => ({
+    prisma,
+  }),
+});
 
 const server = createServer(yoga);
 
