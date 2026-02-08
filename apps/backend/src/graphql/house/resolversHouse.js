@@ -1,0 +1,97 @@
+export const houseResolvers = {
+  Query: {
+    houses: async (_, { ownerAccountId }, context) => {
+      const membership = await context.prisma.ownerAccountMember.findFirst({
+        where: {
+          ownerAccountId,
+          userId: context.userId,
+        },
+      });
+
+      if (!membership) {
+        throw new Error("Not authorized to view houses for this owner account");
+      }
+
+      return context.prisma.house.findMany({
+        where: { ownerAccountId },
+        orderBy: { createdAt: "desc" },
+      });
+    },
+
+    house: async (_, { id }, context) => {
+      const house = await context.prisma.house.findFirst({
+        where: {
+          id,
+          ownerAccount: {
+            members: {
+              some: {
+                userId: context.userId,
+              },
+            },
+          },
+        },
+      });
+
+      if (!house) {
+        throw new Error("House not found or access denied");
+      }
+
+      return house;
+    },
+  },
+
+  Mutation: {
+    createHouse: async (
+      _,
+      { ownerAccountId, name, location, maxTenants },
+      context,
+    ) => {
+      const membership = await context.prisma.ownerAccountMember.findFirst({
+        where: {
+          ownerAccountId,
+          userId: context.userId,
+        },
+      });
+
+      if (!membership) {
+        throw new Error(
+          "Not authorized to create house for this owner account",
+        );
+      }
+
+      return context.prisma.house.create({
+        data: {
+          ownerAccountId,
+          name,
+          location,
+          maxTenants,
+          status: "VACANT",
+        },
+      });
+    },
+
+    updateHouse: async (_, { id, ...updates }, context) => {
+      const house = await context.prisma.house.findFirst({
+        where: {
+          id,
+          ownerAccount: {
+            members: {
+              some: {
+                userId: context.userId,
+              },
+            },
+          },
+        },
+      });
+
+      if (!house) {
+        throw new Error("Not authorized to update this house");
+      }
+
+      return context.prisma.house.update({
+        where: { id },
+        data: updates,
+      });
+    },
+  },
+};
