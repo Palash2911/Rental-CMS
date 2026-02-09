@@ -1,3 +1,5 @@
+import { logActivity } from "../activityLogger.js";
+
 export const ownerAccountResolvers = {
   Query: {
     myOwnerAccounts: async (_, __, context) => {
@@ -37,7 +39,7 @@ export const ownerAccountResolvers = {
 
   Mutation: {
     createOwnerAccount: async (_, { name }, context) => {
-      return context.prisma.ownerAccount.create({
+      const account = await context.prisma.ownerAccount.create({
         data: {
           name,
           status: "PENDING",
@@ -49,6 +51,18 @@ export const ownerAccountResolvers = {
           },
         },
       });
+
+      await logActivity(context.prisma, {
+        entityType: "OwnerAccount",
+        entityId: account.id,
+        action: "CREATED",
+        performedByUserId: context.userId,
+        metadata: {
+          name,
+        },
+      });
+
+      return account;
     },
 
     updateOwnerAccount: async (_, { id, name }, context) => {
@@ -63,12 +77,24 @@ export const ownerAccountResolvers = {
         throw new Error("Not authorized to update this owner account");
       }
 
-      return context.prisma.ownerAccount.update({
+      const updated = await context.prisma.ownerAccount.update({
         where: { id },
         data: {
           name,
         },
       });
+
+      await logActivity(context.prisma, {
+        entityType: "OwnerAccount",
+        entityId: id,
+        action: "UPDATED",
+        performedByUserId: context.userId,
+        metadata: {
+          name,
+        },
+      });
+
+      return updated;
     },
 
     scheduleOwnerAccountDeletion: async (_, { id }, context) => {
@@ -83,6 +109,16 @@ export const ownerAccountResolvers = {
         where: { id },
         data: {
           status: "PENDING_DELETION",
+          deletionScheduledAt: deletionDate,
+        },
+      });
+
+      await logActivity(context.prisma, {
+        entityType: "OwnerAccount",
+        entityId: id,
+        action: "DELETION_SCHEDULED",
+        performedByUserId: context.userId,
+        metadata: {
           deletionScheduledAt: deletionDate,
         },
       });

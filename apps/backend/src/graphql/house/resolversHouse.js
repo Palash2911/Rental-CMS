@@ -1,3 +1,5 @@
+import { logActivity } from "../activityLogger.js";
+
 export const houseResolvers = {
   Query: {
     houses: async (_, { ownerAccountId }, context) => {
@@ -59,7 +61,7 @@ export const houseResolvers = {
         );
       }
 
-      return context.prisma.house.create({
+      const house = await context.prisma.house.create({
         data: {
           ownerAccountId,
           name,
@@ -68,6 +70,21 @@ export const houseResolvers = {
           status: "VACANT",
         },
       });
+
+      await logActivity(context.prisma, {
+        entityType: "House",
+        entityId: house.id,
+        action: "CREATED",
+        performedByUserId: context.userId,
+        metadata: {
+          ownerAccountId,
+          name,
+          location,
+          maxTenants,
+        },
+      });
+
+      return house;
     },
 
     updateHouse: async (_, { id, ...updates }, context) => {
@@ -88,10 +105,24 @@ export const houseResolvers = {
         throw new Error("Not authorized to update this house");
       }
 
-      return context.prisma.house.update({
+      const updatedHouse = await context.prisma.house.update({
         where: { id },
         data: updates,
       });
+
+      await logActivity(context.prisma, {
+        entityType: "House",
+        entityId: id,
+        action: updates.status ? "STATUS_CHANGED" : "UPDATED",
+        performedByUserId: context.userId,
+        metadata: {
+          fromStatus: updates.status ? house.status : undefined,
+          toStatus: updates.status ?? undefined,
+          ...updates,
+        },
+      });
+
+      return updatedHouse;
     },
   },
 };

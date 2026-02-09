@@ -1,3 +1,5 @@
+import { logActivity } from "../activityLogger.js";
+
 export const tenantAssignmentResolvers = {
   Query: {
     tenantAssignmentsByHouse: async (_, { houseId }, context) => {
@@ -44,7 +46,6 @@ export const tenantAssignmentResolvers = {
       { tenantProfileId, houseId, leaseStartDate },
       context,
     ) => {
-      // Ownership check via house
       const house = await context.prisma.house.findFirst({
         where: {
           id: houseId,
@@ -60,7 +61,7 @@ export const tenantAssignmentResolvers = {
         throw new Error("Not authorized to assign tenant to this house");
       }
 
-      return context.prisma.tenantAssignment.create({
+      const assignment = await context.prisma.tenantAssignment.create({
         data: {
           tenantProfileId,
           houseId,
@@ -68,6 +69,20 @@ export const tenantAssignmentResolvers = {
           status: "ACTIVE",
         },
       });
+
+      await logActivity(context.prisma, {
+        entityType: "TenantAssignment",
+        entityId: assignment.id,
+        action: "CREATED",
+        performedByUserId: context.userId,
+        metadata: {
+          tenantProfileId,
+          houseId,
+          leaseStartDate,
+        },
+      });
+
+      return assignment;
     },
 
     exitTenantAssignment: async (_, { id }, context) => {
@@ -91,7 +106,7 @@ export const tenantAssignmentResolvers = {
       const deletionDate = new Date();
       deletionDate.setDate(deletionDate.getDate() + 30);
 
-      return context.prisma.tenantAssignment.update({
+      const updated = await context.prisma.tenantAssignment.update({
         where: { id },
         data: {
           status: "EXITED",
@@ -99,6 +114,18 @@ export const tenantAssignmentResolvers = {
           deletionScheduledAt: deletionDate,
         },
       });
+
+      await logActivity(context.prisma, {
+        entityType: "TenantAssignment",
+        entityId: id,
+        action: "EXITED",
+        performedByUserId: context.userId,
+        metadata: {
+          deletionScheduledAt: deletionDate,
+        },
+      });
+
+      return updated;
     },
   },
 };

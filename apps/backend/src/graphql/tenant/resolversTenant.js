@@ -1,3 +1,5 @@
+import { logActivity } from "../activityLogger.js";
+
 export const tenantResolvers = {
   Query: {
     tenantProfile: async (_, { id }, context) => {
@@ -7,7 +9,6 @@ export const tenantResolvers = {
     },
 
     tenantProfilesByOwner: async (_, { ownerAccountId }, context) => {
-      // Owner membership check
       const membership = await context.prisma.ownerAccountMember.findFirst({
         where: {
           ownerAccountId,
@@ -35,12 +36,23 @@ export const tenantResolvers = {
 
   Mutation: {
     createTenantProfile: async (_, { userId }, context) => {
-      // Owner creating tenant profile (implicit trust for now)
-      return context.prisma.tenantProfile.create({
+      const tenantProfile = await context.prisma.tenantProfile.create({
         data: {
           userId,
         },
       });
+
+      await logActivity(context.prisma, {
+        entityType: "TenantProfile",
+        entityId: tenantProfile.id,
+        action: "CREATED",
+        performedByUserId: context.userId,
+        metadata: {
+          userId,
+        },
+      });
+
+      return tenantProfile;
     },
   },
 };
