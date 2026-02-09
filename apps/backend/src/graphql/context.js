@@ -11,13 +11,10 @@ export async function createContext({ request }) {
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.replace("Bearer ", "");
 
-    console.log(token);
-
     try {
       const decoded = await admin.auth().verifyIdToken(token);
 
       userId = decoded.uid;
-      console.log("CTX USER:", userId);
       email = decoded.email;
       isSuperAdmin = decoded.superAdmin === true;
     } catch (err) {
