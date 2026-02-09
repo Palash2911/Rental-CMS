@@ -3,6 +3,10 @@ import { logActivity } from "../activityLogger.js";
 export const houseResolvers = {
   Query: {
     houses: async (_, { ownerAccountId }, context) => {
+      if (!context.userId) {
+        throw new Error("Authentication required");
+      }
+
       const membership = await context.prisma.ownerAccountMember.findFirst({
         where: {
           ownerAccountId,

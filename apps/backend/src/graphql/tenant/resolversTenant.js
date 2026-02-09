@@ -3,6 +3,10 @@ import { logActivity } from "../activityLogger.js";
 export const tenantResolvers = {
   Query: {
     tenantProfile: async (_, { id }, context) => {
+      if (!context.userId) {
+        throw new Error("Authentication required");
+      }
+
       return context.prisma.tenantProfile.findUnique({
         where: { id },
       });

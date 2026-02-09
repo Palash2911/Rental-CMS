@@ -3,6 +3,10 @@ import { logActivity } from "../activityLogger.js";
 export const receiptResolvers = {
   Query: {
     receiptsByAssignment: async (_, { tenantAssignmentId }, context) => {
+      if (!context.userId) {
+        throw new Error("Authentication required");
+      }
+
       // owner OR the tenant who owns the assignment can read
       const assignment = await context.prisma.tenantAssignment.findFirst({
         where: {

@@ -3,6 +3,10 @@ import { logActivity } from "../activityLogger.js";
 export const issueResolvers = {
   Query: {
     issuesByAssignment: async (_, { tenantAssignmentId }, context) => {
+      if (!context.userId) {
+        throw new Error("Authentication required");
+      }
+
       const assignment = await context.prisma.tenantAssignment.findFirst({
         where: {
           id: tenantAssignmentId,

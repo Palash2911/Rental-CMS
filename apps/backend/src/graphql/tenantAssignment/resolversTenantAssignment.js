@@ -3,6 +3,10 @@ import { logActivity } from "../activityLogger.js";
 export const tenantAssignmentResolvers = {
   Query: {
     tenantAssignmentsByHouse: async (_, { houseId }, context) => {
+      if (!context.userId) {
+        throw new Error("Authentication required");
+      }
+
       const house = await context.prisma.house.findFirst({
         where: {
           id: houseId,

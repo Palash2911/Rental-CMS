@@ -3,6 +3,10 @@ import { logActivity } from "../activityLogger.js";
 export const ownerAccountResolvers = {
   Query: {
     myOwnerAccounts: async (_, __, context) => {
+      if (!context.userId) {
+        throw new Error("Authentication required");
+      }
+
       return context.prisma.ownerAccount.findMany({
         where: {
           members: {
