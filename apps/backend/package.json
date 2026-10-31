@@ -3,26 +3,30 @@
   "private": true,
   "type": "module",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "src/index.js",
   "license": "MIT",
-  "workspaces": [
-    "apps/*"
-  ],
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
-    "dev": "nodemon src/index.js"
+    "dev": "node --watch --env-file-if-exists=.env src/index.js",
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@prisma/adapter-pg": "^7.3.0",
-    "@prisma/client": "^7.3.0",
-    "dotenv": "^17.2.4",
-    "firebase-admin": "^13.6.1",
-    "graphql": "^16.12.0",
-    "graphql-yoga": "^5.18.0",
-    "prisma": "^7.3.0"
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "dotenv": "^17.4.2",
+    "firebase-admin": "^14.5.0",
+    "graphql": "^17.0.2",
+    "graphql-yoga": "^6.0.1"
   },
   "devDependencies": {
-    "@types/node": "^25.2.2",
-    "ts-node-dev": "^2.0.0",
+    "@types/node": "^26",
+    "prisma": "^7.10.1",
     "typescript": "^5.9.3"
   }
 }
