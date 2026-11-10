@@ -1,11 +1,16 @@
 import {
-  applicationDefault,
   cert,
+  FirebaseAppError,
   getApp,
   getApps,
   initializeApp,
 } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+
+import { config } from "../lib/config.js";
+
+const CREDENTIAL_FILE_ERROR_PREFIX =
+  "GOOGLE_APPLICATION_CREDENTIALS points to a file that";
 
 // The JSON.parse error is never included: Node's SyntaxError message quotes part
 // of the input, which would leak the secret. firebase-admin's own validation
@@ -30,27 +35,45 @@ function certFromInlineJson(inlineJson) {
   }
 }
 
+// cert(path) wraps a JSON.parse failure in a message that quotes the file's content,
+// so only the cause's type, fs error code or firebase-admin's own message is reported.
+function describeCredentialFileError(cause) {
+  if (cause instanceof SyntaxError) {
+    return `${CREDENTIAL_FILE_ERROR_PREFIX} is not valid JSON.`;
+  }
+
+  if (cause instanceof FirebaseAppError) {
+    return `${CREDENTIAL_FILE_ERROR_PREFIX} is not a valid service account: ${cause.message}`;
+  }
+
+  if (typeof cause?.code === "string") {
+    return `${CREDENTIAL_FILE_ERROR_PREFIX} cannot be read (${cause.code}).`;
+  }
+
+  return `${CREDENTIAL_FILE_ERROR_PREFIX} is not a valid service account.`;
+}
+
+function certFromFile(path) {
+  try {
+    return cert(path);
+  } catch (error) {
+    throw new Error(describeCredentialFileError(error?.cause));
+  }
+}
+
 /**
- * Credential resolution order:
- * 1. FIREBASE_SERVICE_ACCOUNT_JSON: the full service account JSON as a string.
- *    Used on hosts where you can't ship a file (Lambda, Render, etc.).
- * 2. GOOGLE_APPLICATION_CREDENTIALS: path to the service account file.
- *    Used for local development.
+ * Credentials: exactly one is set, enforced by lib/config.js.
+ * - FIREBASE_SERVICE_ACCOUNT_JSON: the full service account JSON as a string.
+ *   Used on hosts where you can't ship a file (Lambda, Render, etc.).
+ * - GOOGLE_APPLICATION_CREDENTIALS: path to the service account file.
+ *   Used for local development.
  */
 function resolveCredential() {
-  const inlineJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-
-  if (inlineJson) {
-    return certFromInlineJson(inlineJson);
+  if (config.firebaseServiceAccountJson) {
+    return certFromInlineJson(config.firebaseServiceAccountJson);
   }
 
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    return applicationDefault();
-  }
-
-  throw new Error(
-    "Firebase credentials missing. Set GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_SERVICE_ACCOUNT_JSON.",
-  );
+  return certFromFile(config.googleApplicationCredentials);
 }
 
 const app =

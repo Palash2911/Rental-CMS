@@ -42,7 +42,6 @@ const PRISMA_ERROR_MESSAGES = Object.freeze({
   FOREIGN_KEY_VIOLATION: "This action conflicts with related records.",
 });
 
-// Yoga only lets an error through unmasked when it is a GraphQLError whose whole
 class AppError extends GraphQLError {
   constructor(message, code, { httpStatus, extensions } = {}) {
     const allExtensions = { ...extensions, code };

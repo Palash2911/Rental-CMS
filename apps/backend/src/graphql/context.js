@@ -12,6 +12,7 @@ const INVALID_TOKEN_CODES = Object.freeze([
   AuthErrorCode.USER_DISABLED,
 ]);
 
+// Depends on firebase-admin 14.5.0 internal error wording; if it changes, outages fail safe to 401.
 const KEY_FETCH_FAILURE_PREFIXES = Object.freeze([
   "Error fetching public keys for Google certs",
   "Error while making request",

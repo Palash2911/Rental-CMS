@@ -4,12 +4,13 @@ import { createServer } from "node:http";
 
 import { createContext } from "./graphql/context.js";
 import { schema } from "./graphql/rootSchema.js";
+import { config } from "./lib/config.js";
 import prisma from "./prisma.js";
 
-const PORT = Number(process.env.PORT ?? 9000);
+const PORT = config.port;
 
-// Deny by default: a host with NODE_ENV unset or mistyped keeps both off.
-const isDevelopment = process.env.NODE_ENV === "development";
+// Deny by default: only development exposes GraphiQL and introspection; test and production keep both off.
+const isDevelopment = config.isDevelopment;
 
 const disableIntrospection = {
   onValidate({ addValidationRule }) {
@@ -20,7 +21,7 @@ const disableIntrospection = {
 const yoga = createYoga({
   schema,
   context: createContext,
-  maskedErrors: true,
+  maskedErrors: { isDev: isDevelopment },
   graphiql: isDevelopment,
   plugins: isDevelopment ? [] : [disableIntrospection],
 });
