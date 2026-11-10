@@ -7,6 +7,8 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: env("DATABASE_URL"),
+    // The CLI (migrate, introspect) needs a direct, non-pooled connection.
+    // The runtime client connects through the PrismaPg adapter with DATABASE_URL (src/prisma.js).
+    url: env("DIRECT_URL"),
   },
 });

@@ -16,7 +16,6 @@ build/
 out/
 
 # Prisma
-apps/backend/prisma/migrations/
 apps/backend/prisma/dev.db
 
 # Docker

@@ -1,3 +1,4 @@
+import { NoSchemaIntrospectionCustomRule } from "graphql";
 import { createYoga } from "graphql-yoga";
 import { createServer } from "node:http";
 
@@ -7,11 +8,21 @@ import prisma from "./prisma.js";
 
 const PORT = Number(process.env.PORT ?? 9000);
 
+// Deny by default: a host with NODE_ENV unset or mistyped keeps both off.
+const isDevelopment = process.env.NODE_ENV === "development";
+
+const disableIntrospection = {
+  onValidate({ addValidationRule }) {
+    addValidationRule(NoSchemaIntrospectionCustomRule);
+  },
+};
+
 const yoga = createYoga({
   schema,
   context: createContext,
   maskedErrors: true,
-  graphiql: process.env.NODE_ENV !== "production",
+  graphiql: isDevelopment,
+  plugins: isDevelopment ? [] : [disableIntrospection],
 });
 
 const server = createServer(yoga);
