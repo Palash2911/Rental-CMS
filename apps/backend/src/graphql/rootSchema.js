@@ -18,6 +18,11 @@ import { userTypeDefs } from "./user/typeDefsUser.js";
 const baseTypeDefs = `
   type Query
   type Mutation
+
+  type PageInfo {
+    nextCursor: String
+    hasNextPage: Boolean!
+  }
 `;
 
 export const schema = createSchema({

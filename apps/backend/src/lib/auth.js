@@ -1,3 +1,6 @@
+import { AuthErrorCode, FirebaseAuthError } from "firebase-admin/auth";
+
+import { firebaseAuth } from "../firebase/admin.js";
 import {
   OwnerAccountStatus,
   OwnerMemberRole,
@@ -18,6 +21,7 @@ export const ACCOUNT_STATUSES = Object.freeze({
   MEMBER_ACCOUNT_WRITE: Object.freeze([APPROVED, PENDING]),
   MEMBER_TENANT_READ: Object.freeze([APPROVED, PENDING_DELETION]),
   MEMBER_TENANT_WRITE: Object.freeze([APPROVED]),
+  MEMBER_DELETION_CANCEL: Object.freeze([PENDING_DELETION]),
   TENANT_READ: Object.freeze([APPROVED, BLOCKED, PENDING_DELETION]),
   TENANT_WRITE: Object.freeze([APPROVED]),
 });
@@ -202,11 +206,32 @@ export async function requireUser(context) {
   return pending;
 }
 
-/** Returns the signed-in User. Throws ForbiddenError unless the token has the superAdmin claim. */
+// A claim stays in the ID token until it expires (up to an hour), so the token alone
+// would keep a revoked super admin's access. The live read makes revocation immediate.
+async function hasLiveSuperAdminClaim(uid) {
+  try {
+    const record = await firebaseAuth.getUser(uid);
+    return record.customClaims?.superAdmin === true;
+  } catch (error) {
+    if (
+      error instanceof FirebaseAuthError &&
+      error.hasCode(AuthErrorCode.USER_NOT_FOUND)
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Returns the signed-in User. Throws ForbiddenError unless both the token and a live
+ * Firebase read show the superAdmin claim.
+ */
 export async function requireSuperAdmin(context) {
   const user = await requireUser(context);
 
-  if (!context.isSuperAdmin) {
+  if (!context.isSuperAdmin || !(await hasLiveSuperAdminClaim(user.id))) {
     throw new ForbiddenError(MESSAGES.ADMIN_REQUIRED);
   }
 
@@ -226,7 +251,15 @@ export async function requireOwnerMember(context, ownerAccountId, options = {}) 
     select: {
       id: true,
       role: true,
-      ownerAccount: { select: { id: true, name: true, status: true } },
+      ownerAccount: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
     },
   });
 

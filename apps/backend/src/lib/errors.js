@@ -139,3 +139,11 @@ export function isUniqueViolation(error) {
     error.code === PRISMA_ERROR_CODES.UNIQUE_VIOLATION
   );
 }
+
+/** True when a Prisma error means a required record was not found (P2025). */
+export function isRecordNotFound(error) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === PRISMA_ERROR_CODES.RECORD_NOT_FOUND
+  );
+}

@@ -1,133 +1,148 @@
-import { logActivity } from "../activityLogger.js";
+import {
+  ACCOUNT_STATUSES,
+  requireOwnerMember,
+  requireSuperAdmin,
+  requireUser,
+  ROLES,
+} from "../../lib/auth.js";
+import { validate } from "../../lib/validate.js";
+import {
+  adminOwnerAccountsSchema,
+  blockOwnerAccountSchema,
+  createOwnerAccountSchema,
+  myOwnerAccountsSchema,
+  ownerAccountIdSchema,
+  updateOwnerAccountSchema,
+} from "./schemasOwnerAccount.js";
+import * as ownerAccountService from "./serviceOwnerAccount.js";
+
+const PRIMARY_DELETION_REQUEST = Object.freeze({
+  roles: ROLES.PRIMARY_ONLY,
+  statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE,
+});
+
+const PRIMARY_DELETION_CANCEL = Object.freeze({
+  roles: ROLES.PRIMARY_ONLY,
+  statuses: ACCOUNT_STATUSES.MEMBER_DELETION_CANCEL,
+});
 
 export const ownerAccountResolvers = {
   Query: {
-    myOwnerAccounts: async (_, __, context) => {
-      if (!context.userId) {
-        throw new Error("Authentication required");
-      }
-
-      return context.prisma.ownerAccount.findMany({
-        where: {
-          members: {
-            some: {
-              userId: context.userId,
-            },
-          },
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
+    myOwnerAccounts: async (_parent, args, context) => {
+      const user = await requireUser(context);
+      const input = validate(myOwnerAccountsSchema, args);
+      return ownerAccountService.listMyOwnerAccounts(context, {
+        ...input,
+        actorId: user.id,
       });
     },
 
-    ownerAccount: async (_, { id }, context) => {
-      const account = await context.prisma.ownerAccount.findFirst({
-        where: {
-          id,
-          members: {
-            some: {
-              userId: context.userId,
-            },
-          },
-        },
+    ownerAccount: async (_parent, args, context) => {
+      const { ownerAccount } = await requireOwnerMember(context, args.id, {
+        statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_READ,
       });
+      validate(ownerAccountIdSchema, args);
+      return ownerAccountService.toPublicOwnerAccount(ownerAccount);
+    },
 
-      if (!account) {
-        throw new Error("Owner account not found or access denied");
-      }
-
-      return account;
+    adminOwnerAccounts: async (_parent, args, context) => {
+      await requireSuperAdmin(context);
+      const input = validate(adminOwnerAccountsSchema, args);
+      return ownerAccountService.listAdminOwnerAccounts(context, input);
     },
   },
 
   Mutation: {
-    createOwnerAccount: async (_, { name }, context) => {
-      const account = await context.prisma.ownerAccount.create({
-        data: {
-          name,
-          status: "PENDING",
-          members: {
-            create: {
-              userId: context.userId,
-              role: "PRIMARY",
-            },
-          },
-        },
+    createOwnerAccount: async (_parent, args, context) => {
+      const user = await requireUser(context);
+      const input = validate(createOwnerAccountSchema, args);
+      return ownerAccountService.createOwnerAccount(context, {
+        ...input,
+        actorId: user.id,
       });
-
-      await logActivity(context.prisma, {
-        entityType: "OwnerAccount",
-        entityId: account.id,
-        action: "CREATED",
-        performedByUserId: context.userId,
-        metadata: {
-          name,
-        },
-      });
-
-      return account;
     },
 
-    updateOwnerAccount: async (_, { id, name }, context) => {
-      const membership = await context.prisma.ownerAccountMember.findFirst({
-        where: {
-          ownerAccountId: id,
-          userId: context.userId,
-        },
+    updateOwnerAccount: async (_parent, args, context) => {
+      const { user } = await requireOwnerMember(context, args.id, {
+        roles: ROLES.PRIMARY_ONLY,
+        statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE,
       });
-
-      if (!membership) {
-        throw new Error("Not authorized to update this owner account");
-      }
-
-      const updated = await context.prisma.ownerAccount.update({
-        where: { id },
-        data: {
-          name,
-        },
+      const input = validate(updateOwnerAccountSchema, args);
+      return ownerAccountService.renameOwnerAccount(context, {
+        ...input,
+        actorId: user.id,
       });
-
-      await logActivity(context.prisma, {
-        entityType: "OwnerAccount",
-        entityId: id,
-        action: "UPDATED",
-        performedByUserId: context.userId,
-        metadata: {
-          name,
-        },
-      });
-
-      return updated;
     },
 
-    scheduleOwnerAccountDeletion: async (_, { id }, context) => {
-      if (!context.isSuperAdmin) {
-        throw new Error("Only super admin can delete owner accounts");
-      }
-
-      const deletionDate = new Date();
-      deletionDate.setDate(deletionDate.getDate() + 30);
-
-      await context.prisma.ownerAccount.update({
-        where: { id },
-        data: {
-          status: "PENDING_DELETION",
-          deletionScheduledAt: deletionDate,
-        },
+    scheduleOwnerAccountDeletion: async (_parent, args, context) => {
+      const { user } = await requireOwnerMember(
+        context,
+        args.id,
+        PRIMARY_DELETION_REQUEST,
+      );
+      const input = validate(ownerAccountIdSchema, args);
+      return ownerAccountService.scheduleDeletionByOwner(context, {
+        ...input,
+        actorId: user.id,
       });
+    },
 
-      await logActivity(context.prisma, {
-        entityType: "OwnerAccount",
-        entityId: id,
-        action: "DELETION_SCHEDULED",
-        performedByUserId: context.userId,
-        metadata: {
-          deletionScheduledAt: deletionDate,
-        },
+    cancelOwnerAccountDeletion: async (_parent, args, context) => {
+      const { user } = await requireOwnerMember(
+        context,
+        args.id,
+        PRIMARY_DELETION_CANCEL,
+      );
+      const input = validate(ownerAccountIdSchema, args);
+      return ownerAccountService.cancelDeletion(context, {
+        ...input,
+        actorId: user.id,
       });
+    },
 
-      return true;
+    approveOwnerAccount: async (_parent, args, context) => {
+      const user = await requireSuperAdmin(context);
+      const input = validate(ownerAccountIdSchema, args);
+      return ownerAccountService.approveOwnerAccount(context, {
+        ...input,
+        actorId: user.id,
+      });
+    },
+
+    blockOwnerAccount: async (_parent, args, context) => {
+      const user = await requireSuperAdmin(context);
+      const input = validate(blockOwnerAccountSchema, args);
+      return ownerAccountService.blockOwnerAccount(context, {
+        ...input,
+        actorId: user.id,
+      });
+    },
+
+    unblockOwnerAccount: async (_parent, args, context) => {
+      const user = await requireSuperAdmin(context);
+      const input = validate(ownerAccountIdSchema, args);
+      return ownerAccountService.unblockOwnerAccount(context, {
+        ...input,
+        actorId: user.id,
+      });
+    },
+
+    adminScheduleOwnerAccountDeletion: async (_parent, args, context) => {
+      const user = await requireSuperAdmin(context);
+      const input = validate(ownerAccountIdSchema, args);
+      return ownerAccountService.scheduleDeletionByAdmin(context, {
+        ...input,
+        actorId: user.id,
+      });
+    },
+
+    adminCancelOwnerAccountDeletion: async (_parent, args, context) => {
+      const user = await requireSuperAdmin(context);
+      const input = validate(ownerAccountIdSchema, args);
+      return ownerAccountService.cancelDeletion(context, {
+        ...input,
+        actorId: user.id,
+      });
     },
   },
 };

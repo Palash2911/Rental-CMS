@@ -1,132 +1,53 @@
-import { logActivity } from "../activityLogger.js";
+import {
+  ACCOUNT_STATUSES,
+  requireHouseAccess,
+  requireOwnerMember,
+} from "../../lib/auth.js";
+import { validate } from "../../lib/validate.js";
+import {
+  createHouseSchema,
+  houseIdSchema,
+  housesSchema,
+  updateHouseSchema,
+} from "./schemasHouse.js";
+import * as houseService from "./serviceHouse.js";
 
 export const houseResolvers = {
   Query: {
-    houses: async (_, { ownerAccountId }, context) => {
-      if (!context.userId) {
-        throw new Error("Authentication required");
-      }
-
-      const membership = await context.prisma.ownerAccountMember.findFirst({
-        where: {
-          ownerAccountId,
-          userId: context.userId,
-        },
+    houses: async (_parent, args, context) => {
+      await requireOwnerMember(context, args.ownerAccountId, {
+        statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_READ,
       });
-
-      if (!membership) {
-        throw new Error("Not authorized to view houses for this owner account");
-      }
-
-      return context.prisma.house.findMany({
-        where: { ownerAccountId },
-        orderBy: { createdAt: "desc" },
-      });
+      const input = validate(housesSchema, args);
+      return houseService.listHouses(context, input);
     },
 
-    house: async (_, { id }, context) => {
-      const house = await context.prisma.house.findFirst({
-        where: {
-          id,
-          ownerAccount: {
-            members: {
-              some: {
-                userId: context.userId,
-              },
-            },
-          },
-        },
+    house: async (_parent, args, context) => {
+      const { house } = await requireHouseAccess(context, args.id, {
+        statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_READ,
       });
-
-      if (!house) {
-        throw new Error("House not found or access denied");
-      }
-
-      return house;
+      validate(houseIdSchema, args);
+      return houseService.toPublicHouse(house);
     },
   },
 
   Mutation: {
-    createHouse: async (
-      _,
-      { ownerAccountId, name, location, maxTenants },
-      context,
-    ) => {
-      const membership = await context.prisma.ownerAccountMember.findFirst({
-        where: {
-          ownerAccountId,
-          userId: context.userId,
-        },
-      });
-
-      if (!membership) {
-        throw new Error(
-          "Not authorized to create house for this owner account",
-        );
-      }
-
-      const house = await context.prisma.house.create({
-        data: {
-          ownerAccountId,
-          name,
-          location,
-          maxTenants,
-          status: "VACANT",
-        },
-      });
-
-      await logActivity(context.prisma, {
-        entityType: "House",
-        entityId: house.id,
-        action: "CREATED",
-        performedByUserId: context.userId,
-        metadata: {
-          ownerAccountId,
-          name,
-          location,
-          maxTenants,
-        },
-      });
-
-      return house;
+    createHouse: async (_parent, args, context) => {
+      const { user } = await requireOwnerMember(
+        context,
+        args.input.ownerAccountId,
+        { statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE },
+      );
+      const { input } = validate(createHouseSchema, args);
+      return houseService.createHouse(context, { ...input, actorId: user.id });
     },
 
-    updateHouse: async (_, { id, ...updates }, context) => {
-      const house = await context.prisma.house.findFirst({
-        where: {
-          id,
-          ownerAccount: {
-            members: {
-              some: {
-                userId: context.userId,
-              },
-            },
-          },
-        },
+    updateHouse: async (_parent, args, context) => {
+      const { user } = await requireHouseAccess(context, args.input.id, {
+        statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE,
       });
-
-      if (!house) {
-        throw new Error("Not authorized to update this house");
-      }
-
-      const updatedHouse = await context.prisma.house.update({
-        where: { id },
-        data: updates,
-      });
-
-      await logActivity(context.prisma, {
-        entityType: "House",
-        entityId: id,
-        action: updates.status ? "STATUS_CHANGED" : "UPDATED",
-        performedByUserId: context.userId,
-        metadata: {
-          fromStatus: updates.status ? house.status : undefined,
-          toStatus: updates.status ?? undefined,
-          ...updates,
-        },
-      });
-
-      return updatedHouse;
+      const { input } = validate(updateHouseSchema, args);
+      return houseService.updateHouse(context, { ...input, actorId: user.id });
     },
   },
 };

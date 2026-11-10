@@ -1,8 +1,23 @@
+import { z } from "zod";
+
 import { BadUserInputError } from "./errors.js";
 
 const MAX_FIELD_ERRORS = 50;
 const PATH_SEPARATOR = ".";
 const REGEX_FORMAT = "regex";
+
+const USER_ID_MAX_LENGTH = 128;
+const USER_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+/** Id rule for models whose ids Prisma generates with cuid() (OwnerAccount, House and the rest). */
+export const cuidIdSchema = z.cuid();
+
+/** Id rule for User ids, which are Firebase UIDs, not cuids. */
+export const userIdSchema = z
+  .string()
+  .min(1)
+  .max(USER_ID_MAX_LENGTH)
+  .regex(USER_ID_PATTERN);
 
 const SAFE_MESSAGES = Object.freeze({
   UNRECOGNIZED_KEY: "Unrecognized field.",

@@ -56,10 +56,11 @@ model User {
 }
 
 model OwnerAccount {
-  id        String   @id
+  id        String   @id @default(cuid())
   name      String
 
   status OwnerAccountStatus @default(PENDING)
+  statusBeforeDeletion OwnerAccountStatus?
 
   deletionScheduledAt DateTime?
   deletionExecutedAt  DateTime?
