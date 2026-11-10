@@ -131,3 +131,11 @@ export function mapPrismaError(error) {
       return error;
   }
 }
+
+/** True when a Prisma error is a unique constraint violation (P2002). */
+export function isUniqueViolation(error) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === PRISMA_ERROR_CODES.UNIQUE_VIOLATION
+  );
+}

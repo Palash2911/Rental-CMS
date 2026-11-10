@@ -68,6 +68,8 @@ export async function createContext({ request }) {
 
   let userId = null;
   let email = null;
+  let emailVerified = false;
+  let name = null;
   let isSuperAdmin = false;
 
   if (authHeader) {
@@ -84,6 +86,8 @@ export async function createContext({ request }) {
     const decoded = await verifyToken(token);
     userId = decoded.uid;
     email = decoded.email ?? null;
+    emailVerified = decoded.email_verified === true;
+    name = typeof decoded.name === "string" && decoded.name ? decoded.name : null;
     isSuperAdmin = decoded.superAdmin === true;
   }
 
@@ -91,6 +95,8 @@ export async function createContext({ request }) {
     prisma,
     userId,
     email,
+    emailVerified,
+    name,
     isSuperAdmin,
   };
 }

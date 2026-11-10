@@ -12,6 +12,8 @@ import { tenantResolvers } from "./tenant/resolversTenant.js";
 import { tenantTypeDefs } from "./tenant/typeDefsTenant.js";
 import { tenantAssignmentResolvers } from "./tenantAssignment/resolversTenantAssignment.js";
 import { tenantAssignmentTypeDefs } from "./tenantAssignment/typeDefsTenantAssignment.js";
+import { userResolvers } from "./user/resolversUser.js";
+import { userTypeDefs } from "./user/typeDefsUser.js";
 
 const baseTypeDefs = `
   type Query
@@ -21,6 +23,7 @@ const baseTypeDefs = `
 export const schema = createSchema({
   typeDefs: [
     baseTypeDefs,
+    userTypeDefs,
     ownerAccountTypeDefs,
     houseTypeDefs,
     tenantAssignmentTypeDefs,
@@ -29,6 +32,7 @@ export const schema = createSchema({
     issueTypeDefs,
   ],
   resolvers: [
+    userResolvers,
     ownerAccountResolvers,
     houseResolvers,
     tenantResolvers,
