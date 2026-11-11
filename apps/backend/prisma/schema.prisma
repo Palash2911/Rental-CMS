@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -33,6 +34,13 @@ enum TenantAssignmentStatus {
   EXITED
 }
 
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  REVOKED
+}
+
 enum IssueStatus {
   OPEN
   IN_PROGRESS
@@ -43,23 +51,24 @@ enum IssueStatus {
 //// CORE MODELS
 
 model User {
-  id        String   @id
-  email     String   @unique
+  id        String  @id
+  email     String  @unique
   name      String?
-  isBlocked Boolean  @default(false)
+  isBlocked Boolean @default(false)
 
   ownerMemberships OwnerAccountMember[]
   tenantProfile    TenantProfile?
+  sentInvitations  Invitation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model OwnerAccount {
-  id        String   @id @default(cuid())
-  name      String
+  id   String @id @default(cuid())
+  name String
 
-  status OwnerAccountStatus @default(PENDING)
+  status               OwnerAccountStatus  @default(PENDING)
   statusBeforeDeletion OwnerAccountStatus?
 
   deletionScheduledAt DateTime?
@@ -97,11 +106,14 @@ model House {
 
   status HouseStatus @default(VACANT)
 
-  ownerAccount OwnerAccount @relation(fields: [ownerAccountId], references: [id])
+  ownerAccount      OwnerAccount       @relation(fields: [ownerAccountId], references: [id])
   tenantAssignments TenantAssignment[]
+  invitations       Invitation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([ownerAccountId, createdAt, id])
 }
 
 model TenantProfile {
@@ -135,9 +147,44 @@ model TenantAssignment {
   receipts      Receipt[]
   issues        Issue[]
   leaveRequests LeaveRequest[]
+  invitation    Invitation?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([tenantProfileId, houseId], where: { status: { not: "EXITED" } })
+  @@index([houseId, createdAt, id])
+  @@index([tenantProfileId, createdAt, id])
+}
+
+model Invitation {
+  id String @id @default(cuid())
+
+  houseId         String
+  email           String
+  invitedByUserId String
+
+  leaseStartDate DateTime
+  leaseEndDate   DateTime?
+
+  status      InvitationStatus @default(PENDING)
+  expiresAt   DateTime
+  respondedAt DateTime?
+
+  acceptedAssignmentId String? @unique
+
+  house              House             @relation(fields: [houseId], references: [id])
+  invitedBy          User              @relation(fields: [invitedByUserId], references: [id])
+  acceptedAssignment TenantAssignment? @relation(fields: [acceptedAssignmentId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([houseId, email], where: { status: "PENDING" })
+  @@index([houseId, createdAt, id])
+  @@index([houseId, status, createdAt, id])
+  @@index([email, createdAt, id], where: { status: "PENDING" })
+  @@index([invitedByUserId])
 }
 
 model Receipt {
@@ -170,7 +217,7 @@ model LeaveRequest {
   tenantAssignmentId String
   reason             String
   requestedExitDate  DateTime
-  approved           Boolean @default(false)
+  approved           Boolean  @default(false)
 
   tenantAssignment TenantAssignment @relation(fields: [tenantAssignmentId], references: [id])
 

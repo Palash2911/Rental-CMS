@@ -1,16 +1,18 @@
 export const tenantTypeDefs = `
   type TenantProfile {
     id: ID!
-    userId: ID!
+    name: String
+    email: String!
     createdAt: String!
   }
 
-  extend type Query {
-    tenantProfile(id: ID!): TenantProfile
-    tenantProfilesByOwner(ownerAccountId: ID!): [TenantProfile!]!
+  type TenantProfilePage {
+    items: [TenantProfile!]!
+    pageInfo: PageInfo!
   }
 
-  extend type Mutation {
-    createTenantProfile(userId: ID!): TenantProfile!
+  extend type Query {
+    tenantProfile(id: ID!): TenantProfile!
+    tenantProfilesByOwner(ownerAccountId: ID!, first: Int, after: String): TenantProfilePage!
   }
 `;

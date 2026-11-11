@@ -2,6 +2,8 @@ import { createSchema } from "graphql-yoga";
 
 import { houseResolvers } from "./house/resolversHouse.js";
 import { houseTypeDefs } from "./house/typeDefsHouse.js";
+import { invitationResolvers } from "./invitation/resolversInvitation.js";
+import { invitationTypeDefs } from "./invitation/typeDefsInvitation.js";
 import { issueResolvers } from "./issues/resolversIssues.js";
 import { issueTypeDefs } from "./issues/typeDefsIssues.js";
 import { ownerAccountResolvers } from "./ownerAccount/resolversOwnerAccount.js";
@@ -33,6 +35,7 @@ export const schema = createSchema({
     houseTypeDefs,
     tenantAssignmentTypeDefs,
     tenantTypeDefs,
+    invitationTypeDefs,
     receiptTypeDefs,
     issueTypeDefs,
   ],
@@ -42,6 +45,7 @@ export const schema = createSchema({
     houseResolvers,
     tenantResolvers,
     tenantAssignmentResolvers,
+    invitationResolvers,
     receiptResolvers,
     issueResolvers,
   ],

@@ -10,7 +10,8 @@ import {
 import { ConflictError, NotFoundError } from "../../lib/errors.js";
 import { buildPageQuery, toPage } from "../../lib/pagination.js";
 
-const ACTIVE_ASSIGNMENT_STATUSES = Object.freeze([
+/** Assignment statuses that count as an active lease for capacity and occupancy. */
+export const ACTIVE_ASSIGNMENT_STATUSES = Object.freeze([
   TenantAssignmentStatus.ACTIVE,
   TenantAssignmentStatus.NOTICE_PERIOD,
 ]);
@@ -94,7 +95,11 @@ export function createHouse(
 // The per-house serialization point: every write that depends on a house's active
 // assignment count (house updates here, assignment create and exit in 6b) takes this
 // row lock first, so the count cannot change before the transaction commits.
-async function lockHouse(tx, houseId) {
+/**
+ * Takes the house row lock inside the caller's transaction.
+ * Throws NotFoundError when the house does not exist.
+ */
+export async function lockHouse(tx, houseId) {
   const rows = await tx.$queryRaw`SELECT id FROM "House" WHERE id = ${houseId} FOR UPDATE`;
 
   if (rows.length === 0) {
@@ -105,6 +110,45 @@ async function lockHouse(tx, houseId) {
 function countActiveAssignments(tx, houseId) {
   return tx.tenantAssignment.count({
     where: { houseId, status: { in: ACTIVE_ASSIGNMENT_STATUSES } },
+  });
+}
+
+function occupancyStatus(currentStatus, activeCount) {
+  if (currentStatus === HouseStatus.INACTIVE) {
+    return currentStatus;
+  }
+
+  return activeCount > 0 ? HouseStatus.OCCUPIED : HouseStatus.VACANT;
+}
+
+/**
+ * Sets OCCUPIED or VACANT from the active assignment count and logs the change.
+ * The only automatic house status writer. Call under lockHouse, after the assignment write.
+ */
+export async function syncOccupancy(tx, { houseId, actorId }) {
+  const house = await tx.house.findUnique({
+    where: { id: houseId },
+    select: { status: true },
+  });
+  const activeCount = await countActiveAssignments(tx, houseId);
+  const status = occupancyStatus(house.status, activeCount);
+
+  if (status === house.status) {
+    return;
+  }
+
+  await tx.house.update({
+    where: { id: houseId },
+    data: { status },
+    select: { id: true },
+  });
+
+  await logActivity(tx, {
+    entityType: ENTITY_TYPES.HOUSE,
+    entityId: houseId,
+    action: ACTIVITY_ACTIONS.STATUS_CHANGED,
+    performedByUserId: actorId,
+    metadata: { status: { from: house.status, to: status } },
   });
 }
 

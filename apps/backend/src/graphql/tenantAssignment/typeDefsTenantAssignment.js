@@ -7,8 +7,8 @@ export const tenantAssignmentTypeDefs = `
     leaseStartDate: String!
     leaseEndDate: String
     actualExitDate: String
-    deletionScheduledAt: String
     createdAt: String!
+    updatedAt: String!
   }
 
   enum TenantAssignmentStatus {
@@ -17,18 +17,18 @@ export const tenantAssignmentTypeDefs = `
     EXITED
   }
 
+  type TenantAssignmentPage {
+    items: [TenantAssignment!]!
+    pageInfo: PageInfo!
+  }
+
   extend type Query {
-    tenantAssignmentsByHouse(houseId: ID!): [TenantAssignment!]!
-    tenantAssignment(id: ID!): TenantAssignment
+    tenantAssignment(id: ID!): TenantAssignment!
+    tenantAssignmentsByHouse(houseId: ID!, first: Int, after: String): TenantAssignmentPage!
+    myTenantAssignments(first: Int, after: String): TenantAssignmentPage!
   }
 
   extend type Mutation {
-    createTenantAssignment(
-      tenantProfileId: ID!
-      houseId: ID!
-      leaseStartDate: String!
-    ): TenantAssignment!
-
     exitTenantAssignment(id: ID!): TenantAssignment!
   }
 `;

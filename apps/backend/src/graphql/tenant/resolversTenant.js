@@ -1,62 +1,31 @@
-import { logActivity } from "../activityLogger.js";
+import {
+  ACCOUNT_STATUSES,
+  requireOwnerMember,
+  requireTenantProfileAccess,
+} from "../../lib/auth.js";
+import { validate } from "../../lib/validate.js";
+import {
+  tenantProfileIdSchema,
+  tenantProfilesByOwnerSchema,
+} from "./schemasTenant.js";
+import * as tenantService from "./serviceTenant.js";
 
 export const tenantResolvers = {
   Query: {
-    tenantProfile: async (_, { id }, context) => {
-      if (!context.userId) {
-        throw new Error("Authentication required");
-      }
-
-      return context.prisma.tenantProfile.findUnique({
-        where: { id },
+    tenantProfile: async (_parent, args, context) => {
+      const { profile } = await requireTenantProfileAccess(context, args.id, {
+        owner: { statuses: ACCOUNT_STATUSES.MEMBER_TENANT_READ },
       });
+      validate(tenantProfileIdSchema, args);
+      return tenantService.toPublicProfile(profile);
     },
 
-    tenantProfilesByOwner: async (_, { ownerAccountId }, context) => {
-      const membership = await context.prisma.ownerAccountMember.findFirst({
-        where: {
-          ownerAccountId,
-          userId: context.userId,
-        },
+    tenantProfilesByOwner: async (_parent, args, context) => {
+      await requireOwnerMember(context, args.ownerAccountId, {
+        statuses: ACCOUNT_STATUSES.MEMBER_TENANT_READ,
       });
-
-      if (!membership) {
-        throw new Error("Not authorized to view tenants for this owner");
-      }
-
-      return context.prisma.tenantProfile.findMany({
-        where: {
-          assignments: {
-            some: {
-              house: {
-                ownerAccountId,
-              },
-            },
-          },
-        },
-      });
-    },
-  },
-
-  Mutation: {
-    createTenantProfile: async (_, { userId }, context) => {
-      const tenantProfile = await context.prisma.tenantProfile.create({
-        data: {
-          userId,
-        },
-      });
-
-      await logActivity(context.prisma, {
-        entityType: "TenantProfile",
-        entityId: tenantProfile.id,
-        action: "CREATED",
-        performedByUserId: context.userId,
-        metadata: {
-          userId,
-        },
-      });
-
-      return tenantProfile;
+      const input = validate(tenantProfilesByOwnerSchema, args);
+      return tenantService.listProfilesByOwner(context, input);
     },
   },
 };

@@ -1,135 +1,70 @@
-import { logActivity } from "../activityLogger.js";
+import {
+  ACCOUNT_STATUSES,
+  requireAssignmentAccess,
+  requireHouseAccess,
+  requireUser,
+} from "../../lib/auth.js";
+import { validate } from "../../lib/validate.js";
+import {
+  assignmentIdSchema,
+  assignmentsByHouseSchema,
+  myAssignmentsSchema,
+} from "./schemasTenantAssignment.js";
+import * as assignmentService from "./serviceTenantAssignment.js";
+
+const READ_ACCESS = Object.freeze({
+  owner: { statuses: ACCOUNT_STATUSES.MEMBER_TENANT_READ },
+  tenant: { statuses: ACCOUNT_STATUSES.TENANT_READ },
+});
+
+const EXIT_ACCESS = Object.freeze({
+  owner: { statuses: ACCOUNT_STATUSES.MEMBER_TENANT_WRITE },
+});
 
 export const tenantAssignmentResolvers = {
   Query: {
-    tenantAssignmentsByHouse: async (_, { houseId }, context) => {
-      if (!context.userId) {
-        throw new Error("Authentication required");
-      }
-
-      const house = await context.prisma.house.findFirst({
-        where: {
-          id: houseId,
-          ownerAccount: {
-            members: {
-              some: { userId: context.userId },
-            },
-          },
-        },
-      });
-
-      if (!house) {
-        throw new Error("Not authorized to view tenants for this house");
-      }
-
-      return context.prisma.tenantAssignment.findMany({
-        where: { houseId },
-        orderBy: { createdAt: "desc" },
-      });
+    tenantAssignment: async (_parent, args, context) => {
+      const { assignment } = await requireAssignmentAccess(
+        context,
+        args.id,
+        READ_ACCESS,
+      );
+      validate(assignmentIdSchema, args);
+      return assignmentService.toPublicAssignment(assignment);
     },
 
-    tenantAssignment: async (_, { id }, context) => {
-      return context.prisma.tenantAssignment.findFirst({
-        where: {
-          id,
-          house: {
-            ownerAccount: {
-              members: {
-                some: { userId: context.userId },
-              },
-            },
-          },
-        },
+    tenantAssignmentsByHouse: async (_parent, args, context) => {
+      await requireHouseAccess(context, args.houseId, {
+        statuses: ACCOUNT_STATUSES.MEMBER_TENANT_READ,
+      });
+      const input = validate(assignmentsByHouseSchema, args);
+      return assignmentService.listAssignmentsByHouse(context, input);
+    },
+
+    myTenantAssignments: async (_parent, args, context) => {
+      const user = await requireUser(context);
+      const input = validate(myAssignmentsSchema, args);
+      return assignmentService.listMyAssignments(context, {
+        ...input,
+        actorId: user.id,
+        accountStatuses: ACCOUNT_STATUSES.TENANT_READ,
       });
     },
   },
 
   Mutation: {
-    createTenantAssignment: async (
-      _,
-      { tenantProfileId, houseId, leaseStartDate },
-      context,
-    ) => {
-      const house = await context.prisma.house.findFirst({
-        where: {
-          id: houseId,
-          ownerAccount: {
-            members: {
-              some: { userId: context.userId },
-            },
-          },
-        },
+    exitTenantAssignment: async (_parent, args, context) => {
+      const { user, assignment } = await requireAssignmentAccess(
+        context,
+        args.id,
+        EXIT_ACCESS,
+      );
+      const { id } = validate(assignmentIdSchema, args);
+      return assignmentService.exitAssignment(context, {
+        actorId: user.id,
+        id,
+        houseId: assignment.houseId,
       });
-
-      if (!house) {
-        throw new Error("Not authorized to assign tenant to this house");
-      }
-
-      const assignment = await context.prisma.tenantAssignment.create({
-        data: {
-          tenantProfileId,
-          houseId,
-          leaseStartDate: new Date(leaseStartDate),
-          status: "ACTIVE",
-        },
-      });
-
-      await logActivity(context.prisma, {
-        entityType: "TenantAssignment",
-        entityId: assignment.id,
-        action: "CREATED",
-        performedByUserId: context.userId,
-        metadata: {
-          tenantProfileId,
-          houseId,
-          leaseStartDate,
-        },
-      });
-
-      return assignment;
-    },
-
-    exitTenantAssignment: async (_, { id }, context) => {
-      const assignment = await context.prisma.tenantAssignment.findFirst({
-        where: {
-          id,
-          house: {
-            ownerAccount: {
-              members: {
-                some: { userId: context.userId },
-              },
-            },
-          },
-        },
-      });
-
-      if (!assignment) {
-        throw new Error("Not authorized to exit this tenant");
-      }
-
-      const deletionDate = new Date();
-      deletionDate.setDate(deletionDate.getDate() + 30);
-
-      const updated = await context.prisma.tenantAssignment.update({
-        where: { id },
-        data: {
-          status: "EXITED",
-          actualExitDate: new Date(),
-          deletionScheduledAt: deletionDate,
-        },
-      });
-
-      await logActivity(context.prisma, {
-        entityType: "TenantAssignment",
-        entityId: id,
-        action: "EXITED",
-        performedByUserId: context.userId,
-        metadata: {
-          deletionScheduledAt: deletionDate,
-        },
-      });
-
-      return updated;
     },
   },
 };

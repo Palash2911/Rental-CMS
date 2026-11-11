@@ -44,6 +44,8 @@ const MESSAGES = Object.freeze({
   HOUSE_NOT_FOUND: "House not found.",
   ASSIGNMENT_NOT_FOUND: "Tenant assignment not found.",
   ISSUE_NOT_FOUND: "Issue not found.",
+  INVITATION_NOT_FOUND: "Invitation not found.",
+  TENANT_PROFILE_NOT_FOUND: "Tenant profile not found.",
 });
 
 const HOUSE_FIELDS = Object.freeze({
@@ -65,9 +67,29 @@ const ASSIGNMENT_FIELDS = Object.freeze({
   leaseStartDate: true,
   leaseEndDate: true,
   actualExitDate: true,
-  deletionScheduledAt: true,
   createdAt: true,
   updatedAt: true,
+});
+
+const INVITATION_FIELDS = Object.freeze({
+  id: true,
+  houseId: true,
+  email: true,
+  status: true,
+  leaseStartDate: true,
+  leaseEndDate: true,
+  expiresAt: true,
+  respondedAt: true,
+  acceptedAssignmentId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+const TENANT_PROFILE_FIELDS = Object.freeze({
+  id: true,
+  userId: true,
+  createdAt: true,
+  user: { select: { name: true, email: true } },
 });
 
 const ISSUE_FIELDS = Object.freeze({
@@ -378,4 +400,107 @@ export async function requireIssueAccess(context, issueId, options = {}) {
     ownerAccount: parts.ownerAccount,
     ...access,
   };
+}
+
+/**
+ * Returns `{ user, invitation, houseName, membership, ownerAccount }` for a member of the
+ * account that owns the invitation's house. Options as requireOwnerMember.
+ * Throws NotFoundError for non-members and ForbiddenError for a disallowed role or status.
+ */
+export async function requireInvitationAccess(context, invitationId, options = {}) {
+  const user = await requireUser(context);
+
+  const row = await context.prisma.invitation.findUnique({
+    where: { id: invitationId },
+    select: {
+      ...INVITATION_FIELDS,
+      house: { select: { name: true, ownerAccount: ownerAccountSelect(user.id) } },
+    },
+  });
+
+  if (!row) {
+    throw new NotFoundError(MESSAGES.INVITATION_NOT_FOUND);
+  }
+
+  const { house, ...invitation } = row;
+  const { ownerAccount, membership } = splitOwnerAccount(house.ownerAccount);
+
+  if (!membership) {
+    throw new NotFoundError(MESSAGES.INVITATION_NOT_FOUND);
+  }
+
+  const error = memberAccessError(membership, ownerAccount.status, options);
+
+  if (error) {
+    throw error;
+  }
+
+  return { user, invitation, houseName: house.name, membership, ownerAccount };
+}
+
+function memberAssignmentFilter(userId, roles, statuses) {
+  const ownerAccount = { members: { some: { userId, role: { in: roles } } } };
+
+  if (statuses) {
+    ownerAccount.status = { in: statuses };
+  }
+
+  return { house: { ownerAccount } };
+}
+
+function toProfile({ id, createdAt, user }) {
+  return { id, createdAt, name: user.name, email: user.email };
+}
+
+/**
+ * Returns `{ user, profile, accessAs }` where profile is `{ id, name, email, createdAt }`.
+ * The tenant can always read their own profile. With `owner: { roles, statuses }`, a member
+ * of any account where the tenant has an assignment (EXITED included) can read it when that
+ * account's status is allowed. Throws NotFoundError for unrelated users and ForbiddenError
+ * when every linked account has a disallowed status or role.
+ */
+export async function requireTenantProfileAccess(context, profileId, options = {}) {
+  const user = await requireUser(context);
+  const roles = options.owner?.roles ?? ROLES.ANY;
+  const statuses = options.owner?.statuses ?? DEFAULT_STATUSES;
+
+  const row = await context.prisma.tenantProfile.findUnique({
+    where: { id: profileId },
+    select: {
+      ...TENANT_PROFILE_FIELDS,
+      assignments: {
+        where: memberAssignmentFilter(user.id, roles, statuses),
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+
+  if (!row) {
+    throw new NotFoundError(MESSAGES.TENANT_PROFILE_NOT_FOUND);
+  }
+
+  if (row.userId === user.id) {
+    return { user, profile: toProfile(row), accessAs: ACCESS_TYPES.TENANT };
+  }
+
+  if (options.owner && row.assignments.length > 0) {
+    return { user, profile: toProfile(row), accessAs: ACCESS_TYPES.OWNER };
+  }
+
+  const linked = await context.prisma.tenantAssignment.findFirst({
+    where: {
+      tenantProfileId: profileId,
+      ...memberAssignmentFilter(user.id, ROLES.ANY, null),
+    },
+    select: { id: true },
+  });
+
+  if (!linked) {
+    throw new NotFoundError(MESSAGES.TENANT_PROFILE_NOT_FOUND);
+  }
+
+  throw new ForbiddenError(
+    options.owner ? MESSAGES.STATUS_NOT_ALLOWED : MESSAGES.ACCESS_NOT_ALLOWED,
+  );
 }
