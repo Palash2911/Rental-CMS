@@ -1,76 +1,50 @@
-import { logActivity } from "../activityLogger.js";
+import {
+  ACCOUNT_STATUSES,
+  requireAssignmentAccess,
+  requireReceiptAccess,
+} from "../../lib/auth.js";
+import { validate } from "../../lib/validate.js";
+import {
+  createReceiptSchema,
+  receiptIdSchema,
+  receiptsByAssignmentSchema,
+} from "./schemasReceipts.js";
+import * as receiptService from "./serviceReceipts.js";
+
+const READ_ACCESS = Object.freeze({
+  owner: { statuses: ACCOUNT_STATUSES.MEMBER_TENANT_READ },
+  tenant: { statuses: ACCOUNT_STATUSES.TENANT_READ },
+});
+
+const TENANT_WRITE_ACCESS = Object.freeze({
+  tenant: { statuses: ACCOUNT_STATUSES.TENANT_WRITE },
+});
 
 export const receiptResolvers = {
   Query: {
-    receiptsByAssignment: async (_, { tenantAssignmentId }, context) => {
-      if (!context.userId) {
-        throw new Error("Authentication required");
-      }
+    // owner OR the tenant who owns the assignment can read
+    receiptsByAssignment: async (_parent, args, context) => {
+      await requireAssignmentAccess(context, args.tenantAssignmentId, READ_ACCESS);
+      const input = validate(receiptsByAssignmentSchema, args);
+      return receiptService.listReceiptsByAssignment(context, input);
+    },
 
-      // owner OR the tenant who owns the assignment can read
-      const assignment = await context.prisma.tenantAssignment.findFirst({
-        where: {
-          id: tenantAssignmentId,
-          OR: [
-            { tenantProfile: { userId: context.userId } },
-            {
-              house: {
-                ownerAccount: {
-                  members: { some: { userId: context.userId } },
-                },
-              },
-            },
-          ],
-        },
-      });
-
-      if (!assignment) {
-        throw new Error("Not authorized to view receipts");
-      }
-
-      return context.prisma.receipt.findMany({
-        where: { tenantAssignmentId },
-        orderBy: { createdAt: "desc" },
-      });
+    receipt: async (_parent, args, context) => {
+      const { receipt } = await requireReceiptAccess(context, args.id, READ_ACCESS);
+      validate(receiptIdSchema, args);
+      return receiptService.toPublicReceipt(receipt);
     },
   },
 
   Mutation: {
-    uploadReceipt: async (
-      _,
-      { tenantAssignmentId, amount, paidAt, fileUrl },
-      context,
-    ) => {
-      const assignment = await context.prisma.tenantAssignment.findFirst({
-        where: {
-          id: tenantAssignmentId,
-          tenantProfile: { userId: context.userId },
-          status: { in: ["ACTIVE", "NOTICE_PERIOD"] },
-        },
-      });
-
-      if (!assignment) {
-        throw new Error("Not allowed to upload receipt");
-      }
-
-      const receipt = await context.prisma.receipt.create({
-        data: {
-          tenantAssignmentId,
-          amount,
-          paidAt: new Date(paidAt),
-          fileUrl,
-        },
-      });
-
-      await logActivity(context.prisma, {
-        entityType: "Receipt",
-        entityId: receipt.id,
-        action: "CREATED",
-        performedByUserId: context.userId,
-        metadata: { amount },
-      });
-
-      return receipt;
+    createReceipt: async (_parent, args, context) => {
+      const { user } = await requireAssignmentAccess(
+        context,
+        args.input.tenantAssignmentId,
+        TENANT_WRITE_ACCESS,
+      );
+      const { input } = validate(createReceiptSchema, args);
+      return receiptService.createReceipt(context, { ...input, actorId: user.id });
     },
   },
 };

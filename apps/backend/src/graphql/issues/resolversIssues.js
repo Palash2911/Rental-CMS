@@ -1,110 +1,100 @@
-import { logActivity } from "../activityLogger.js";
+import {
+  ACCESS_TYPES,
+  ACCOUNT_STATUSES,
+  requireAssignmentAccess,
+  requireHouseAccess,
+  requireIssueAccess,
+} from "../../lib/auth.js";
+import { validate } from "../../lib/validate.js";
+import {
+  createIssueSchema,
+  issueIdSchema,
+  issuesByAssignmentSchema,
+  issuesByHouseSchema,
+  updateIssueStatusSchema,
+} from "./schemasIssues.js";
+import * as issueService from "./serviceIssues.js";
+
+const READ_ACCESS = Object.freeze({
+  owner: { statuses: ACCOUNT_STATUSES.MEMBER_TENANT_READ },
+  tenant: { statuses: ACCOUNT_STATUSES.TENANT_READ },
+});
+
+const TENANT_WRITE_ACCESS = Object.freeze({
+  tenant: { statuses: ACCOUNT_STATUSES.TENANT_WRITE },
+});
+
+const STATUS_WRITE_ACCESS = Object.freeze({
+  owner: { statuses: ACCOUNT_STATUSES.MEMBER_TENANT_WRITE },
+  tenant: { statuses: ACCOUNT_STATUSES.TENANT_WRITE },
+});
+
+function actorRoles({ accessAs, tenantAccess }) {
+  const roles = [];
+
+  if (accessAs === ACCESS_TYPES.OWNER) {
+    roles.push(issueService.ISSUE_ACTOR_ROLES.OWNER);
+  }
+
+  if (tenantAccess) {
+    roles.push(issueService.ISSUE_ACTOR_ROLES.TENANT);
+  }
+
+  return roles;
+}
 
 export const issueResolvers = {
   Query: {
-    issuesByAssignment: async (_, { tenantAssignmentId }, context) => {
-      if (!context.userId) {
-        throw new Error("Authentication required");
-      }
+    issue: async (_parent, args, context) => {
+      const { issue } = await requireIssueAccess(context, args.id, READ_ACCESS);
+      validate(issueIdSchema, args);
+      return issueService.toPublicIssue(issue);
+    },
 
-      const assignment = await context.prisma.tenantAssignment.findFirst({
-        where: {
-          id: tenantAssignmentId,
-          OR: [
-            { tenantProfile: { userId: context.userId } },
-            {
-              house: {
-                ownerAccount: {
-                  members: { some: { userId: context.userId } },
-                },
-              },
-            },
-          ],
-        },
+    issuesByAssignment: async (_parent, args, context) => {
+      await requireAssignmentAccess(context, args.tenantAssignmentId, READ_ACCESS);
+      const input = validate(issuesByAssignmentSchema, args);
+      return issueService.listIssuesByAssignment(context, input);
+    },
+
+    // owners only
+    issuesByHouse: async (_parent, args, context) => {
+      await requireHouseAccess(context, args.houseId, {
+        statuses: ACCOUNT_STATUSES.MEMBER_TENANT_READ,
       });
-
-      if (!assignment) {
-        throw new Error("Not authorized to view issues");
-      }
-
-      return context.prisma.issue.findMany({
-        where: { tenantAssignmentId },
-        orderBy: { createdAt: "desc" },
-      });
+      const input = validate(issuesByHouseSchema, args);
+      return issueService.listIssuesByHouse(context, input);
     },
   },
 
   Mutation: {
-    createIssue: async (
-      _,
-      { tenantAssignmentId, title, description },
-      context,
-    ) => {
-      const assignment = await context.prisma.tenantAssignment.findFirst({
-        where: {
-          id: tenantAssignmentId,
-          tenantProfile: { userId: context.userId },
-          status: { in: ["ACTIVE", "NOTICE_PERIOD"] },
-        },
+    createIssue: async (_parent, args, context) => {
+      const { user, assignment } = await requireAssignmentAccess(
+        context,
+        args.input.tenantAssignmentId,
+        TENANT_WRITE_ACCESS,
+      );
+      const { input } = validate(createIssueSchema, args);
+      return issueService.createIssue(context, {
+        ...input,
+        houseId: assignment.houseId,
+        actorId: user.id,
       });
-
-      if (!assignment) {
-        throw new Error("Not allowed to create issue");
-      }
-
-      const issue = await context.prisma.issue.create({
-        data: {
-          tenantAssignmentId,
-          title,
-          description,
-          status: "OPEN",
-        },
-      });
-
-      await logActivity(context.prisma, {
-        entityType: "Issue",
-        entityId: issue.id,
-        action: "CREATED",
-        performedByUserId: context.userId,
-        metadata: { title },
-      });
-
-      return issue;
     },
 
-    updateIssueStatus: async (_, { id, status }, context) => {
-      // owners only
-      const issue = await context.prisma.issue.findFirst({
-        where: {
-          id,
-          tenantAssignment: {
-            house: {
-              ownerAccount: {
-                members: { some: { userId: context.userId } },
-              },
-            },
-          },
-        },
+    updateIssueStatus: async (_parent, args, context) => {
+      const access = await requireIssueAccess(
+        context,
+        args.input.id,
+        STATUS_WRITE_ACCESS,
+      );
+      const { input } = validate(updateIssueStatusSchema, args);
+      return issueService.updateIssueStatus(context, {
+        ...input,
+        actorId: access.user.id,
+        actorRoles: actorRoles(access),
+        tenantAssignmentId: access.issue.tenantAssignmentId,
       });
-
-      if (!issue) {
-        throw new Error("Not authorized to update issue");
-      }
-
-      const updated = await context.prisma.issue.update({
-        where: { id },
-        data: { status },
-      });
-
-      await logActivity(context.prisma, {
-        entityType: "Issue",
-        entityId: id,
-        action: "STATUS_CHANGED",
-        performedByUserId: context.userId,
-        metadata: { to: status },
-      });
-
-      return updated;
     },
   },
 };

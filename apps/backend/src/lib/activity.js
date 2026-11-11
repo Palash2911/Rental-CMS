@@ -4,6 +4,8 @@ export const ENTITY_TYPES = Object.freeze({
   INVITATION: "Invitation",
   TENANT_PROFILE: "TenantProfile",
   TENANT_ASSIGNMENT: "TenantAssignment",
+  RECEIPT: "Receipt",
+  ISSUE: "Issue",
 });
 
 export const ACTIVITY_ACTIONS = Object.freeze({

@@ -19,6 +19,39 @@ export const userIdSchema = z
   .max(USER_ID_MAX_LENGTH)
   .regex(USER_ID_PATTERN);
 
+const CALENDAR_YEAR_RANGE = Object.freeze({ MIN: 2000, MAX: 2100 });
+const UTC_MIDNIGHT_SUFFIX = "T00:00:00.000Z";
+const YEAR_LENGTH = 4;
+
+const DATE_MESSAGES = Object.freeze({
+  INVALID_DATE: "Enter a valid calendar date as YYYY-MM-DD.",
+  YEAR_OUT_OF_RANGE: `Dates must fall between ${CALENDAR_YEAR_RANGE.MIN} and ${CALENDAR_YEAR_RANGE.MAX}.`,
+});
+
+function toUtcMidnight(value) {
+  return new Date(`${value}${UTC_MIDNIGHT_SUFFIX}`);
+}
+
+function isRealCalendarDate(value) {
+  const date = toUtcMidnight(value);
+  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
+}
+
+function isYearInRange(value) {
+  const year = Number(value.slice(0, YEAR_LENGTH));
+  return year >= CALENDAR_YEAR_RANGE.MIN && year <= CALENDAR_YEAR_RANGE.MAX;
+}
+
+/**
+ * Calendar date rule: a real YYYY-MM-DD date with a year from 2000 to 2100, parsed to a Date
+ * at UTC midnight. Services format it back with toCalendarDate.
+ */
+export const calendarDateSchema = z.iso
+  .date({ error: DATE_MESSAGES.INVALID_DATE, abort: true })
+  .refine(isRealCalendarDate, { message: DATE_MESSAGES.INVALID_DATE, abort: true })
+  .refine(isYearInRange, DATE_MESSAGES.YEAR_OUT_OF_RANGE)
+  .transform(toUtcMidnight);
+
 const SAFE_MESSAGES = Object.freeze({
   UNRECOGNIZED_KEY: "Unrecognized field.",
   INVALID_FORMAT: "Invalid format.",

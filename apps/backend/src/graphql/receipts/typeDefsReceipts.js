@@ -2,22 +2,32 @@ export const receiptTypeDefs = `
   type Receipt {
     id: ID!
     tenantAssignmentId: ID!
-    amount: Float!
+    amountCents: Int!
+    currency: String!
     paidAt: String!
-    fileUrl: String!
+    note: String
     createdAt: String!
   }
 
+  type ReceiptPage {
+    items: [Receipt!]!
+    pageInfo: PageInfo!
+  }
+
+  input CreateReceiptInput {
+    tenantAssignmentId: ID!
+    amountCents: Int!
+    currency: String
+    paidAt: String!
+    note: String
+  }
+
   extend type Query {
-    receiptsByAssignment(tenantAssignmentId: ID!): [Receipt!]!
+    receiptsByAssignment(tenantAssignmentId: ID!, first: Int, after: String): ReceiptPage!
+    receipt(id: ID!): Receipt!
   }
 
   extend type Mutation {
-    uploadReceipt(
-      tenantAssignmentId: ID!
-      amount: Float!
-      paidAt: String!
-      fileUrl: String!
-    ): Receipt!
+    createReceipt(input: CreateReceiptInput!): Receipt!
   }
 `;

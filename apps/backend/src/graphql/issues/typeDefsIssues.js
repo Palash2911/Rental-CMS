@@ -2,6 +2,7 @@ export const issueTypeDefs = `
   type Issue {
     id: ID!
     tenantAssignmentId: ID!
+    houseId: ID!
     title: String!
     description: String!
     status: IssueStatus!
@@ -13,22 +14,43 @@ export const issueTypeDefs = `
     OPEN
     IN_PROGRESS
     RESOLVED
+    CLOSED
+  }
+
+  type IssuePage {
+    items: [Issue!]!
+    pageInfo: PageInfo!
+  }
+
+  input CreateIssueInput {
+    tenantAssignmentId: ID!
+    title: String!
+    description: String!
+  }
+
+  input UpdateIssueStatusInput {
+    id: ID!
+    status: IssueStatus!
   }
 
   extend type Query {
-    issuesByAssignment(tenantAssignmentId: ID!): [Issue!]!
+    issue(id: ID!): Issue!
+    issuesByAssignment(
+      tenantAssignmentId: ID!
+      status: IssueStatus
+      first: Int
+      after: String
+    ): IssuePage!
+    issuesByHouse(
+      houseId: ID!
+      status: IssueStatus
+      first: Int
+      after: String
+    ): IssuePage!
   }
 
   extend type Mutation {
-    createIssue(
-      tenantAssignmentId: ID!
-      title: String!
-      description: String!
-    ): Issue!
-
-    updateIssueStatus(
-      id: ID!
-      status: IssueStatus!
-    ): Issue!
+    createIssue(input: CreateIssueInput!): Issue!
+    updateIssueStatus(input: UpdateIssueStatusInput!): Issue!
   }
 `;

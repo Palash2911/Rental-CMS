@@ -107,6 +107,21 @@ export async function lockHouse(tx, houseId) {
   }
 }
 
+/**
+ * Takes a FOR KEY SHARE lock on the house inside the caller's transaction, for writes that
+ * insert a row referencing the house and also lock one of its assignments. Taking it first
+ * keeps the lock order House, then TenantAssignment, the same as exit, so the two cannot
+ * deadlock. It does not block other key-share holders.
+ * Throws NotFoundError when the house does not exist.
+ */
+export async function shareLockHouse(tx, houseId) {
+  const rows = await tx.$queryRaw`SELECT id FROM "House" WHERE id = ${houseId} FOR KEY SHARE`;
+
+  if (rows.length === 0) {
+    throw new NotFoundError(MESSAGES.NOT_FOUND);
+  }
+}
+
 function countActiveAssignments(tx, houseId) {
   return tx.tenantAssignment.count({
     where: { houseId, status: { in: ACTIVE_ASSIGNMENT_STATUSES } },

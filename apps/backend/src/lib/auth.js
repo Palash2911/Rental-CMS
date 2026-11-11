@@ -44,6 +44,7 @@ const MESSAGES = Object.freeze({
   HOUSE_NOT_FOUND: "House not found.",
   ASSIGNMENT_NOT_FOUND: "Tenant assignment not found.",
   ISSUE_NOT_FOUND: "Issue not found.",
+  RECEIPT_NOT_FOUND: "Receipt not found.",
   INVITATION_NOT_FOUND: "Invitation not found.",
   TENANT_PROFILE_NOT_FOUND: "Tenant profile not found.",
 });
@@ -95,11 +96,22 @@ const TENANT_PROFILE_FIELDS = Object.freeze({
 const ISSUE_FIELDS = Object.freeze({
   id: true,
   tenantAssignmentId: true,
+  houseId: true,
   title: true,
   description: true,
   status: true,
   createdAt: true,
   updatedAt: true,
+});
+
+const RECEIPT_FIELDS = Object.freeze({
+  id: true,
+  tenantAssignmentId: true,
+  amountCents: true,
+  currency: true,
+  paidAt: true,
+  note: true,
+  createdAt: true,
 });
 
 const userCache = new WeakMap();
@@ -172,6 +184,9 @@ function tenantAccessError(accountStatus, policy) {
   return null;
 }
 
+// The result also carries `tenantAccess`: true when the caller is the assignment's tenant
+// and the tenant policy passes, even when accessAs is OWNER. A member who is also the tenant
+// (self-tenancy) needs both paths for role-aware actions such as issue transitions.
 function resolveAssignmentAccess(user, parts, options, notFoundMessage) {
   const { tenantUserId, ownerAccount, membership } = parts;
   const isTenant = tenantUserId === user.id;
@@ -183,17 +198,17 @@ function resolveAssignmentAccess(user, parts, options, notFoundMessage) {
   const ownerError = membership
     ? memberAccessError(membership, ownerAccount.status, options.owner)
     : null;
-
-  if (membership && !ownerError) {
-    return { accessAs: ACCESS_TYPES.OWNER, membership };
-  }
-
   const tenantError = isTenant
     ? tenantAccessError(ownerAccount.status, options.tenant)
     : null;
+  const tenantAccess = isTenant && !tenantError;
 
-  if (isTenant && !tenantError) {
-    return { accessAs: ACCESS_TYPES.TENANT, membership: null };
+  if (membership && !ownerError) {
+    return { accessAs: ACCESS_TYPES.OWNER, membership, tenantAccess };
+  }
+
+  if (tenantAccess) {
+    return { accessAs: ACCESS_TYPES.TENANT, membership: null, tenantAccess };
   }
 
   throw ownerError ?? tenantError;
@@ -396,6 +411,43 @@ export async function requireIssueAccess(context, issueId, options = {}) {
   return {
     user,
     issue,
+    assignment: parts.assignment,
+    ownerAccount: parts.ownerAccount,
+    ...access,
+  };
+}
+
+/**
+ * Returns `{ user, receipt, assignment, ownerAccount, accessAs, membership, tenantAccess }`.
+ * Options and errors as requireAssignmentAccess, resolved through the receipt's assignment.
+ */
+export async function requireReceiptAccess(context, receiptId, options = {}) {
+  const user = await requireUser(context);
+
+  const row = await context.prisma.receipt.findUnique({
+    where: { id: receiptId },
+    select: {
+      ...RECEIPT_FIELDS,
+      tenantAssignment: { select: assignmentSelect(user.id) },
+    },
+  });
+
+  if (!row) {
+    throw new NotFoundError(MESSAGES.RECEIPT_NOT_FOUND);
+  }
+
+  const { tenantAssignment, ...receipt } = row;
+  const parts = splitAssignment(tenantAssignment);
+  const access = resolveAssignmentAccess(
+    user,
+    parts,
+    options,
+    MESSAGES.RECEIPT_NOT_FOUND,
+  );
+
+  return {
+    user,
+    receipt,
     assignment: parts.assignment,
     ownerAccount: parts.ownerAccount,
     ...access,

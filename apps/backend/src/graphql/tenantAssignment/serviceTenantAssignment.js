@@ -29,7 +29,22 @@ export const ASSIGNMENT_SELECT = Object.freeze({
 
 const MESSAGES = Object.freeze({
   NOT_ACTIVE: "Only an active tenant assignment can be exited.",
+  ASSIGNMENT_NOT_ACTIVE: "This tenant assignment is no longer active.",
 });
+
+/**
+ * Takes a FOR SHARE lock on the assignment inside the caller's transaction and checks it is
+ * ACTIVE or NOTICE_PERIOD. A concurrent exit's update waits until the caller commits, so a
+ * row created against the assignment can never land after it exited.
+ * Throws ConflictError when the assignment is not active.
+ */
+export async function lockActiveAssignment(tx, assignmentId) {
+  const rows = await tx.$queryRaw`SELECT status FROM "TenantAssignment" WHERE id = ${assignmentId} FOR SHARE`;
+
+  if (rows.length === 0 || !ACTIVE_ASSIGNMENT_STATUSES.includes(rows[0].status)) {
+    throw new ConflictError(MESSAGES.ASSIGNMENT_NOT_ACTIVE);
+  }
+}
 
 /** Formats a calendar date stored as UTC midnight as YYYY-MM-DD. */
 export function toCalendarDate(date) {
