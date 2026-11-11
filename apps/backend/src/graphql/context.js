@@ -18,6 +18,24 @@ const KEY_FETCH_FAILURE_PREFIXES = Object.freeze([
   "Error while making request",
 ]);
 
+// A claim stays in the ID token until it expires (up to an hour), so the token alone
+// would keep a revoked super admin's access. The live read makes revocation immediate.
+async function hasLiveSuperAdminClaim(uid) {
+  try {
+    const record = await firebaseAuth.getUser(uid);
+    return record.customClaims?.superAdmin === true;
+  } catch (error) {
+    if (
+      error instanceof FirebaseAuthError &&
+      error.hasCode(AuthErrorCode.USER_NOT_FOUND)
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
 function unauthenticated(message) {
   return new UnauthenticatedError(message, {
     httpStatus: HTTP_STATUS.UNAUTHORIZED,
@@ -98,5 +116,6 @@ export async function createContext({ request }) {
     emailVerified,
     name,
     isSuperAdmin,
+    hasLiveSuperAdminClaim,
   };
 }

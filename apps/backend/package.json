@@ -16,6 +16,8 @@
     "prisma:studio": "prisma studio",
     "admin:grant-super-admin": "node --env-file-if-exists=.env scripts/superAdmin.js grant",
     "admin:revoke-super-admin": "node --env-file-if-exists=.env scripts/superAdmin.js revoke",
+    "test": "node --env-file=.env.test --test --test-concurrency=1 --test-global-setup=test/globalSetup.js \"test/**/*.test.js\"",
+    "test:db:migrate": "node --env-file=.env.test scripts/testDbMigrate.js",
     "postinstall": "prisma generate"
   },
   "dependencies": {

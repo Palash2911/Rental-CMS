@@ -48,10 +48,10 @@ const envSchema = z.object({
 });
 
 // Blank entries such as `PORT=` in an env file count as unset.
-function readEnvironment() {
+function readEnvironment(source) {
   return Object.fromEntries(
     VARIABLE_NAMES.map((name) => {
-      const value = process.env[name];
+      const value = source[name];
       return [name, value === "" ? undefined : value];
     }),
   );
@@ -95,8 +95,12 @@ function emulatorProblems(rawEnv) {
   return [];
 }
 
-function loadConfig() {
-  const rawEnv = readEnvironment();
+/**
+ * Validates an environment object (shaped like process.env) and returns the frozen config.
+ * Throws an Error listing each failing variable by name and reason, never its value.
+ */
+export function parseConfig(source) {
+  const rawEnv = readEnvironment(source);
   const result = envSchema.safeParse(rawEnv);
 
   const problems = [
@@ -125,4 +129,4 @@ function loadConfig() {
 }
 
 /** Validated environment config. Holds secrets: never log it. */
-export const config = loadConfig();
+export const config = parseConfig(process.env);
