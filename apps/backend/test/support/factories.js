@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import {
   HouseStatus,
+  InvitationStatus,
   OwnerAccountStatus,
   OwnerMemberRole,
   TenantAssignmentStatus,
@@ -11,6 +12,9 @@ import { prisma } from "./db.js";
 const FIREBASE_UID_LENGTH = 28;
 const EMAIL_DOMAIN = "example.test";
 const DEFAULT_LEASE_START = new Date("2026-01-01T00:00:00.000Z");
+const DEFAULT_INVITATION_LEASE_START = new Date("2026-12-01T00:00:00.000Z");
+const INVITATION_EXPIRY_MS = 14 * 24 * 60 * 60 * 1000;
+const EXPIRED_AGO_MS = 60 * 1000;
 
 /** A random id shaped like a Firebase UID: 28 characters of letters, digits, "_" and "-". */
 export function firebaseUid() {
@@ -119,4 +123,60 @@ export async function createAssignment(house, tenant, { status = TenantAssignmen
   }
 
   return assignment;
+}
+
+/** Inserts an invitation directly (test setup only). Defaults: PENDING, expiring in 14 days. */
+export function createInvitation(
+  house,
+  inviter,
+  {
+    email = uniqueEmail("invitee"),
+    status = InvitationStatus.PENDING,
+    expiresAt = new Date(Date.now() + INVITATION_EXPIRY_MS),
+    leaseStartDate = DEFAULT_INVITATION_LEASE_START,
+    leaseEndDate = null,
+    respondedAt = null,
+  } = {},
+) {
+  return prisma.invitation.create({
+    data: {
+      houseId: house.id,
+      email,
+      invitedByUserId: inviter.id,
+      status,
+      expiresAt,
+      leaseStartDate,
+      leaseEndDate,
+      respondedAt,
+    },
+  });
+}
+
+/** Inserts `count` PENDING, unexpired invitations to distinct emails in one statement. */
+export function createPendingInvitations(house, inviter, count) {
+  const expiresAt = new Date(Date.now() + INVITATION_EXPIRY_MS);
+
+  return prisma.invitation.createMany({
+    data: Array.from({ length: count }, () => ({
+      houseId: house.id,
+      email: uniqueEmail("pending"),
+      invitedByUserId: inviter.id,
+      status: InvitationStatus.PENDING,
+      expiresAt,
+      leaseStartDate: DEFAULT_INVITATION_LEASE_START,
+    })),
+  });
+}
+
+/** Moves an invitation's expiry one minute into the past. */
+export function expireInvitation(invitation) {
+  return prisma.invitation.update({
+    where: { id: invitation.id },
+    data: { expiresAt: new Date(Date.now() - EXPIRED_AGO_MS) },
+  });
+}
+
+/** Sets an owner account's status directly (test setup only). */
+export function setAccountStatus(account, status) {
+  return prisma.ownerAccount.update({ where: { id: account.id }, data: { status } });
 }

@@ -125,12 +125,15 @@ export function listInvitationsByHouse(context, { houseId, status, first, after 
 
 /** Lists the PENDING, unexpired invitations sent to the actor's email, newest first. */
 export function listMyInvitations(context, { actorEmail, first, after }) {
+  // Only invitations from APPROVED accounts are listed: acceptInvitation refuses any
+  // other account status, so showing them would offer the tenant an action that fails.
   return listPage(
     context.prisma,
     {
       email: normaliseEmail(actorEmail),
       status: InvitationStatus.PENDING,
       expiresAt: { gt: new Date() },
+      house: { ownerAccount: { status: OwnerAccountStatus.APPROVED } },
     },
     { first, after },
   );
