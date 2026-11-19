@@ -1,40 +1,6 @@
-import { AuthErrorCode, FirebaseAuthError } from "firebase-admin/auth";
-
-import { firebaseAuth } from "../firebase/admin.js";
 import { HTTP_STATUS, UnauthenticatedError } from "../lib/errors.js";
-import prisma from "../prisma.js";
 
 const BEARER_PREFIX = /^Bearer\s+/i;
-
-const INVALID_TOKEN_CODES = Object.freeze([
-  AuthErrorCode.ID_TOKEN_EXPIRED,
-  AuthErrorCode.ID_TOKEN_REVOKED,
-  AuthErrorCode.USER_DISABLED,
-]);
-
-// Depends on firebase-admin 14.5.0 internal error wording; if it changes, outages fail safe to 401.
-const KEY_FETCH_FAILURE_PREFIXES = Object.freeze([
-  "Error fetching public keys for Google certs",
-  "Error while making request",
-]);
-
-// A claim stays in the ID token until it expires (up to an hour), so the token alone
-// would keep a revoked super admin's access. The live read makes revocation immediate.
-async function hasLiveSuperAdminClaim(uid) {
-  try {
-    const record = await firebaseAuth.getUser(uid);
-    return record.customClaims?.superAdmin === true;
-  } catch (error) {
-    if (
-      error instanceof FirebaseAuthError &&
-      error.hasCode(AuthErrorCode.USER_NOT_FOUND)
-    ) {
-      return false;
-    }
-
-    throw error;
-  }
-}
 
 function unauthenticated(message) {
   return new UnauthenticatedError(message, {
@@ -42,80 +8,79 @@ function unauthenticated(message) {
   });
 }
 
-function isKeyFetchFailure(error) {
-  const message = typeof error.message === "string" ? error.message : "";
-  return KEY_FETCH_FAILURE_PREFIXES.some((prefix) =>
-    message.startsWith(prefix),
-  );
-}
-
-function isInvalidTokenError(error) {
-  if (!(error instanceof FirebaseAuthError)) {
-    return false;
+function assertDependencies({ prisma, verifyIdToken, hasLiveSuperAdminClaim }) {
+  if (prisma === null || typeof prisma !== "object") {
+    throw new TypeError("createContextFactory requires a prisma client.");
   }
 
-  if (INVALID_TOKEN_CODES.some((code) => error.hasCode(code))) {
-    return true;
+  if (typeof verifyIdToken !== "function") {
+    throw new TypeError(
+      "createContextFactory requires a verifyIdToken function.",
+    );
   }
 
-  return (
-    error.hasCode(AuthErrorCode.INVALID_ARGUMENT) && !isKeyFetchFailure(error)
-  );
-}
-
-async function verifyToken(token) {
-  try {
-    return await firebaseAuth.verifyIdToken(token);
-  } catch (error) {
-    if (isInvalidTokenError(error)) {
-      throw unauthenticated("Invalid or expired token.");
-    }
-
-    throw error;
+  if (typeof hasLiveSuperAdminClaim !== "function") {
+    throw new TypeError(
+      "createContextFactory requires a hasLiveSuperAdminClaim function.",
+    );
   }
 }
 
 /**
- * Builds the per-request GraphQL context from the Authorization header.
- * Throws UnauthenticatedError (HTTP 401) for a malformed header or an invalid,
- * expired or revoked token. Any other verification failure, such as Firebase
- * being unreachable, is rethrown unchanged so Yoga masks it as a server error.
+ * Returns the createContext function Yoga calls per request. Dependencies are
+ * injected so the context can be built without Firebase. verifyIdToken must throw
+ * UnauthenticatedError (HTTP 401) for a bad token and rethrow anything else.
+ * Throws TypeError immediately if a dependency is missing or invalid.
  */
-export async function createContext({ request }) {
-  const authHeader = request.headers.get("authorization");
+export function createContextFactory(dependencies) {
+  assertDependencies(dependencies ?? {});
+  const { prisma, verifyIdToken, hasLiveSuperAdminClaim } = dependencies;
 
-  let userId = null;
-  let email = null;
-  let emailVerified = false;
-  let name = null;
-  let isSuperAdmin = false;
+  /**
+   * Builds the per-request GraphQL context from the Authorization header.
+   * Throws UnauthenticatedError (HTTP 401) for a malformed header or an invalid,
+   * expired or revoked token. Any other verification failure, such as Firebase
+   * being unreachable, is rethrown unchanged so Yoga masks it as a server error.
+   */
+  return async function createContext({ request }) {
+    const authHeader = request.headers.get("authorization");
 
-  if (authHeader) {
-    if (!BEARER_PREFIX.test(authHeader)) {
-      throw unauthenticated("Authorization header must use the Bearer scheme.");
+    let userId = null;
+    let email = null;
+    let emailVerified = false;
+    let name = null;
+    let isSuperAdmin = false;
+
+    if (authHeader) {
+      if (!BEARER_PREFIX.test(authHeader)) {
+        throw unauthenticated(
+          "Authorization header must use the Bearer scheme.",
+        );
+      }
+
+      const token = authHeader.replace(BEARER_PREFIX, "").trim();
+
+      if (!token) {
+        throw unauthenticated("Missing bearer token.");
+      }
+
+      const decoded = await verifyIdToken(token);
+      userId = decoded.uid;
+      email = decoded.email ?? null;
+      emailVerified = decoded.email_verified === true;
+      name =
+        typeof decoded.name === "string" && decoded.name ? decoded.name : null;
+      isSuperAdmin = decoded.superAdmin === true;
     }
 
-    const token = authHeader.replace(BEARER_PREFIX, "").trim();
-
-    if (!token) {
-      throw unauthenticated("Missing bearer token.");
-    }
-
-    const decoded = await verifyToken(token);
-    userId = decoded.uid;
-    email = decoded.email ?? null;
-    emailVerified = decoded.email_verified === true;
-    name = typeof decoded.name === "string" && decoded.name ? decoded.name : null;
-    isSuperAdmin = decoded.superAdmin === true;
-  }
-
-  return {
-    prisma,
-    userId,
-    email,
-    emailVerified,
-    name,
-    isSuperAdmin,
-    hasLiveSuperAdminClaim,
+    return {
+      prisma,
+      userId,
+      email,
+      emailVerified,
+      name,
+      isSuperAdmin,
+      hasLiveSuperAdminClaim,
+    };
   };
 }

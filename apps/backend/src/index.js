@@ -2,7 +2,11 @@ import { NoSchemaIntrospectionCustomRule } from "graphql";
 import { createYoga } from "graphql-yoga";
 import { createServer } from "node:http";
 
-import { createContext } from "./graphql/context.js";
+import {
+  hasLiveSuperAdminClaim,
+  verifyIdToken,
+} from "./firebase/identity.js";
+import { createContextFactory } from "./graphql/context.js";
 import { schema } from "./graphql/rootSchema.js";
 import { config } from "./lib/config.js";
 import prisma from "./prisma.js";
@@ -20,7 +24,11 @@ const disableIntrospection = {
 
 const yoga = createYoga({
   schema,
-  context: createContext,
+  context: createContextFactory({
+    prisma,
+    verifyIdToken,
+    hasLiveSuperAdminClaim,
+  }),
   maskedErrors: { isDev: isDevelopment },
   graphiql: isDevelopment,
   plugins: isDevelopment ? [] : [disableIntrospection],
