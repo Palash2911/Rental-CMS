@@ -13,6 +13,7 @@ import {
   NotFoundError,
 } from "../../lib/errors.js";
 import { buildPageQuery, toPage } from "../../lib/pagination.js";
+import { syncReadOnlySince } from "../billing/subscriptionStore.js";
 
 const { APPROVED, PENDING, BLOCKED, PENDING_DELETION } = OwnerAccountStatus;
 
@@ -237,6 +238,10 @@ function applyTransition(context, transition, { actorId, id, metadata = {} }) {
       performedByUserId: actorId,
       metadata: { fromStatus: current.status, toStatus: account.status, ...metadata },
     });
+
+    // A status change can change billing entitlement (for example, approving an account
+    // that has no subscription makes it read-only), so readOnlySince is kept in step.
+    await syncReadOnlySince(tx, id);
 
     return toPublicOwnerAccount(account);
   });

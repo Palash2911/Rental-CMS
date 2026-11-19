@@ -2226,6 +2226,11 @@ strip-ansi@^7.0.1:
   dependencies:
     ansi-regex "^6.2.2"
 
+stripe@23.2.0:
+  version "23.2.0"
+  resolved "https://registry.yarnpkg.com/stripe/-/stripe-23.2.0.tgz#886c3833d9287940dd7ddb0b2e5c84426c9455e9"
+  integrity sha512-0W0J4yA9qFO2rnF61v8Y62OiO2SmAR+Cv04VJaFUMpCxiq8lG5bxEYbeSMSpMDR9ofFZGd+Z/iUIgSFbOolmUw==
+
 strnum@^2.1.2:
   version "2.1.2"
   resolved "https://registry.yarnpkg.com/strnum/-/strnum-2.1.2.tgz#a5e00ba66ab25f9cafa3726b567ce7a49170937a"

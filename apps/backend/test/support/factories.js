@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 
 import {
+  BillingInterval,
+  BillingPlan,
   HouseStatus,
   InvitationStatus,
   IssueStatus,
@@ -9,6 +11,7 @@ import {
   TenantAssignmentStatus,
 } from "../../src/generated/prisma/enums.ts";
 import { prisma } from "./db.js";
+import { unexpectedStripeGateway } from "./stripe.js";
 
 const FIREBASE_UID_LENGTH = 28;
 const EMAIL_DOMAIN = "example.test";
@@ -45,6 +48,7 @@ export function tokenContext({
   name = null,
   superAdmin = false,
   liveSuperAdmin = superAdmin,
+  billingGateway = unexpectedStripeGateway(),
 }) {
   return {
     prisma,
@@ -54,6 +58,7 @@ export function tokenContext({
     name,
     isSuperAdmin: superAdmin,
     hasLiveSuperAdminClaim: async () => liveSuperAdmin,
+    billingGateway,
   };
 }
 
@@ -72,13 +77,47 @@ export function anonymousContext() {
   return tokenContext({ userId: null, emailVerified: false });
 }
 
-/** Creates an owner account with `owner` as a member (PRIMARY by default). */
+/**
+ * A paid subscription with full access and the largest Stripe plan, so tests that are not
+ * about billing are never limited by it. Billing tests pass their own `billing`, or null.
+ */
+export const DEFAULT_BILLING = Object.freeze({
+  plan: BillingPlan.PRO,
+  interval: BillingInterval.MONTH,
+  stripeStatus: "active",
+});
+
+/**
+ * Creates an owner account with `owner` as a member (PRIMARY by default), and a Subscription
+ * row from `billing` (DEFAULT_BILLING unless given; null creates no row).
+ */
 export function createOwnerAccount(
   owner,
-  { status = OwnerAccountStatus.APPROVED, name = "Test Rentals", role = OwnerMemberRole.PRIMARY, ...extra } = {},
+  {
+    status = OwnerAccountStatus.APPROVED,
+    name = "Test Rentals",
+    role = OwnerMemberRole.PRIMARY,
+    billing = DEFAULT_BILLING,
+    ...extra
+  } = {},
 ) {
   return prisma.ownerAccount.create({
-    data: { name, status, ...extra, members: { create: { userId: owner.id, role } } },
+    data: {
+      name,
+      status,
+      ...extra,
+      members: { create: { userId: owner.id, role } },
+      ...(billing ? { subscription: { create: { ...billing } } } : {}),
+    },
+  });
+}
+
+/** Replaces an account's Subscription columns directly (test setup only). */
+export function setBilling(account, billing) {
+  return prisma.subscription.upsert({
+    where: { ownerAccountId: account.id },
+    create: { ownerAccountId: account.id, ...billing },
+    update: billing,
   });
 }
 

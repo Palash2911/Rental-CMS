@@ -10,6 +10,11 @@ function validEnv(overrides = {}) {
     NODE_ENV: "test",
     DATABASE_URL: SECRET_URL,
     GOOGLE_APPLICATION_CREDENTIALS: "./service-account.json",
+    STRIPE_SECRET_KEY: "sk_test_SuperSecretStripeKey",
+    STRIPE_WEBHOOK_SECRET: "whsec_SuperSecretSigningSecret",
+    STRIPE_CHECKOUT_SUCCESS_URL: "http://localhost:3000/billing?checkout=success",
+    STRIPE_CHECKOUT_CANCEL_URL: "http://localhost:3000/billing?checkout=cancel",
+    STRIPE_PORTAL_RETURN_URL: "http://localhost:3000/billing",
     ...overrides,
   };
 }
@@ -79,6 +84,57 @@ describe("parseConfig", () => {
     const config = parseConfig(validEnv({ NODE_ENV: "development", FIREBASE_AUTH_EMULATOR_HOST: "localhost:9099" }));
 
     assert.equal(config.isDevelopment, true);
+  });
+
+  it("requires every Stripe variable", () => {
+    const names = [
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET",
+      "STRIPE_CHECKOUT_SUCCESS_URL",
+      "STRIPE_CHECKOUT_CANCEL_URL",
+      "STRIPE_PORTAL_RETURN_URL",
+    ];
+    const message = configError(validEnv(Object.fromEntries(names.map((name) => [name, undefined]))));
+
+    for (const name of names) {
+      assert.match(message, new RegExp(`${name} is required`));
+    }
+  });
+
+  it("validates the format of the Stripe key, signing secret and redirect URLs", () => {
+    const message = configError(validEnv({
+      STRIPE_SECRET_KEY: "pk_test_publishable",
+      STRIPE_WEBHOOK_SECRET: "secret",
+      STRIPE_CHECKOUT_SUCCESS_URL: "ftp://example.test/success",
+      STRIPE_CHECKOUT_CANCEL_URL: "not a url",
+      STRIPE_PORTAL_RETURN_URL: "javascript:alert(1)",
+    }));
+
+    assert.match(message, /STRIPE_SECRET_KEY must be a Stripe secret or restricted key/);
+    assert.match(message, /STRIPE_WEBHOOK_SECRET must be a Stripe webhook signing secret/);
+    assert.match(message, /STRIPE_CHECKOUT_SUCCESS_URL must be an http:\/\/ or https:\/\/ URL/);
+    assert.match(message, /STRIPE_CHECKOUT_CANCEL_URL must be an http:\/\/ or https:\/\/ URL/);
+    assert.match(message, /STRIPE_PORTAL_RETURN_URL must be an http:\/\/ or https:\/\/ URL/);
+  });
+
+  it("accepts restricted keys and exposes the Stripe settings", () => {
+    const config = parseConfig(validEnv({ STRIPE_SECRET_KEY: "rk_test_Restricted" }));
+
+    assert.equal(config.stripeSecretKey, "rk_test_Restricted");
+    assert.equal(config.stripeWebhookSecret, "whsec_SuperSecretSigningSecret");
+    assert.equal(config.stripeCheckoutSuccessUrl, "http://localhost:3000/billing?checkout=success");
+    assert.equal(config.stripeCheckoutCancelUrl, "http://localhost:3000/billing?checkout=cancel");
+    assert.equal(config.stripePortalReturnUrl, "http://localhost:3000/billing");
+  });
+
+  it("refuses a live Stripe key outside production and allows it in production", () => {
+    for (const NODE_ENV of ["development", "test"]) {
+      const message = configError(validEnv({ NODE_ENV, STRIPE_SECRET_KEY: "sk_live_SuperSecretLiveKey" }));
+      assert.match(message, /STRIPE_SECRET_KEY must be a test-mode key unless NODE_ENV is production/);
+      assert.doesNotMatch(message, /SuperSecretLiveKey/);
+    }
+
+    assert.equal(parseConfig(validEnv({ NODE_ENV: "production", STRIPE_SECRET_KEY: "rk_live_Key" })).isProduction, true);
   });
 
   it("never includes variable values in the error", () => {

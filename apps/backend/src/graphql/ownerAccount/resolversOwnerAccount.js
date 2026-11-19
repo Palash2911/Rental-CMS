@@ -16,14 +16,18 @@ import {
 } from "./schemasOwnerAccount.js";
 import * as ownerAccountService from "./serviceOwnerAccount.js";
 
+// An owner can always leave, or change their mind, even while billing has made the
+// account read-only.
 const PRIMARY_DELETION_REQUEST = Object.freeze({
   roles: ROLES.PRIMARY_ONLY,
   statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE,
+  allowReadOnly: true,
 });
 
 const PRIMARY_DELETION_CANCEL = Object.freeze({
   roles: ROLES.PRIMARY_ONLY,
   statuses: ACCOUNT_STATUSES.MEMBER_DELETION_CANCEL,
+  allowReadOnly: true,
 });
 
 export const ownerAccountResolvers = {

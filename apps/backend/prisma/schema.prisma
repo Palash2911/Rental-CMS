@@ -48,6 +48,18 @@ enum IssueStatus {
   CLOSED
 }
 
+// Plans sold through Stripe. ENTERPRISE is not a Stripe plan: it is Subscription.enterprise.
+enum BillingPlan {
+  STARTER
+  GROWTH
+  PRO
+}
+
+enum BillingInterval {
+  MONTH
+  YEAR
+}
+
 //// CORE MODELS
 
 model User {
@@ -74,14 +86,61 @@ model OwnerAccount {
   deletionScheduledAt DateTime?
   deletionExecutedAt  DateTime?
 
-  members OwnerAccountMember[]
-  houses  House[]
+  members      OwnerAccountMember[]
+  houses       House[]
+  subscription Subscription?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status, createdAt, id])
   @@index([deletionScheduledAt])
+}
+
+// Billing state for one owner account, mirrored from Stripe by the webhook. Kept apart from
+// OwnerAccount.status: entitlement is computed from both in lib/entitlement.js.
+model Subscription {
+  id             String @id @default(cuid())
+  ownerAccountId String @unique
+
+  stripeCustomerId         String? @unique
+  stripeSubscriptionId     String? @unique
+  pendingCheckoutSessionId String? @unique
+
+  plan              BillingPlan?
+  interval          BillingInterval?
+  // Raw Stripe status (trialing, active, past_due, canceled, unpaid, ...). A string, not an
+  // enum, because Stripe adds statuses without a major API change.
+  stripeStatus      String?
+  trialEnd          DateTime?
+  currentPeriodEnd  DateTime?
+  cancelAtPeriodEnd Boolean          @default(false)
+
+  // Set once, the first time a subscription with a trial is seen; one trial per account ever.
+  trialUsedAt DateTime?
+
+  // Set by a super admin: no Stripe price, no tenant limit.
+  enterprise Boolean @default(false)
+
+  // When billing made the account read-only; cleared when access returns. Used by the
+  // later grace-period and deletion job.
+  readOnlySince DateTime?
+
+  ownerAccount OwnerAccount @relation(fields: [ownerAccountId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([readOnlySince])
+}
+
+// Stripe event ids already processed, so a redelivered webhook is applied once.
+model StripeEvent {
+  id          String   @id
+  type        String
+  processedAt DateTime @default(now())
+
+  @@index([processedAt])
 }
 
 model OwnerAccountMember {

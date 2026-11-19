@@ -3,6 +3,12 @@ import {
   OwnerMemberRole,
 } from "../generated/prisma/enums.ts";
 import { syncUserFromToken } from "../graphql/user/serviceUser.js";
+import {
+  ACCESS,
+  computeEntitlement,
+  ENTITLEMENT_FIELDS,
+  READ_ONLY_MESSAGE,
+} from "./entitlement.js";
 import { ForbiddenError, NotFoundError, UnauthenticatedError } from "./errors.js";
 
 const { APPROVED, PENDING, BLOCKED, PENDING_DELETION } = OwnerAccountStatus;
@@ -21,7 +27,17 @@ export const ACCOUNT_STATUSES = Object.freeze({
   MEMBER_DELETION_CANCEL: Object.freeze([PENDING_DELETION]),
   TENANT_READ: Object.freeze([APPROVED, BLOCKED, PENDING_DELETION]),
   TENANT_WRITE: Object.freeze([APPROVED]),
+  MEMBER_BILLING: Object.freeze([APPROVED, PENDING, PENDING_DELETION]),
 });
+
+// Policies using these status sets are reads, so billing read-only never blocks them. Every
+// other policy is treated as a write and is refused on a read-only account unless it sets
+// `allowReadOnly` (billing and account deletion). Unknown policies therefore fail closed.
+const READ_STATUS_SETS = new Set([
+  ACCOUNT_STATUSES.MEMBER_ACCOUNT_READ,
+  ACCOUNT_STATUSES.MEMBER_TENANT_READ,
+  ACCOUNT_STATUSES.TENANT_READ,
+]);
 
 export const ACCESS_TYPES = Object.freeze({
   OWNER: "OWNER",
@@ -124,6 +140,7 @@ function ownerAccountSelect(userId) {
         select: { id: true, role: true },
         take: 1,
       },
+      subscription: { select: ENTITLEMENT_FIELDS },
     },
   };
 }
@@ -136,8 +153,24 @@ function assignmentSelect(userId) {
   };
 }
 
-function splitOwnerAccount({ members, ...ownerAccount }) {
-  return { ownerAccount, membership: members[0] ?? null };
+function splitOwnerAccount({ members, subscription, ...ownerAccount }) {
+  return {
+    ownerAccount,
+    membership: members[0] ?? null,
+    entitlement: computeEntitlement(ownerAccount.status, subscription),
+  };
+}
+
+function readOnlyError(policy, statuses, entitlement) {
+  if (
+    entitlement.access !== ACCESS.READ_ONLY ||
+    policy.allowReadOnly === true ||
+    READ_STATUS_SETS.has(statuses)
+  ) {
+    return null;
+  }
+
+  return new ForbiddenError(READ_ONLY_MESSAGE);
 }
 
 function splitAssignment({ tenantProfile, house, ...assignment }) {
@@ -148,7 +181,9 @@ function splitAssignment({ tenantProfile, house, ...assignment }) {
   };
 }
 
-function memberAccessError(membership, accountStatus, policy) {
+// Checks run in order: account status, role, then billing entitlement, so a BLOCKED account
+// always reports its status first.
+function memberAccessError(membership, accountStatus, policy, entitlement) {
   if (!policy) {
     return new ForbiddenError(MESSAGES.ACCESS_NOT_ALLOWED);
   }
@@ -164,10 +199,10 @@ function memberAccessError(membership, accountStatus, policy) {
     return new ForbiddenError(MESSAGES.ROLE_NOT_ALLOWED);
   }
 
-  return null;
+  return readOnlyError(policy, statuses, entitlement);
 }
 
-function tenantAccessError(accountStatus, policy) {
+function tenantAccessError(accountStatus, policy, entitlement) {
   if (!policy) {
     return new ForbiddenError(MESSAGES.ACCESS_NOT_ALLOWED);
   }
@@ -178,14 +213,14 @@ function tenantAccessError(accountStatus, policy) {
     return new ForbiddenError(MESSAGES.STATUS_NOT_ALLOWED);
   }
 
-  return null;
+  return readOnlyError(policy, statuses, entitlement);
 }
 
 // The result also carries `tenantAccess`: true when the caller is the assignment's tenant
 // and the tenant policy passes, even when accessAs is OWNER. A member who is also the tenant
 // (self-tenancy) needs both paths for role-aware actions such as issue transitions.
 function resolveAssignmentAccess(user, parts, options, notFoundMessage) {
-  const { tenantUserId, ownerAccount, membership } = parts;
+  const { tenantUserId, ownerAccount, membership, entitlement } = parts;
   const isTenant = tenantUserId === user.id;
 
   if (!membership && !isTenant) {
@@ -193,10 +228,10 @@ function resolveAssignmentAccess(user, parts, options, notFoundMessage) {
   }
 
   const ownerError = membership
-    ? memberAccessError(membership, ownerAccount.status, options.owner)
+    ? memberAccessError(membership, ownerAccount.status, options.owner, entitlement)
     : null;
   const tenantError = isTenant
-    ? tenantAccessError(ownerAccount.status, options.tenant)
+    ? tenantAccessError(ownerAccount.status, options.tenant, entitlement)
     : null;
   const tenantAccess = isTenant && !tenantError;
 
@@ -257,9 +292,11 @@ export async function requireSuperAdmin(context) {
 }
 
 /**
- * Returns `{ user, membership, ownerAccount }` for a member of the account.
- * Options: `roles` (default ROLES.ANY), `statuses` (default APPROVED only).
- * Throws NotFoundError for non-members and ForbiddenError for a disallowed role or status.
+ * Returns `{ user, membership, ownerAccount, entitlement }` for a member of the account.
+ * Options: `roles` (default ROLES.ANY), `statuses` (default APPROVED only), and
+ * `allowReadOnly` (default false) to permit a write while billing makes the account read-only.
+ * Throws NotFoundError for non-members and ForbiddenError for a disallowed role or status,
+ * or for a write on a read-only account.
  */
 export async function requireOwnerMember(context, ownerAccountId, options = {}) {
   const user = await requireUser(context);
@@ -276,6 +313,7 @@ export async function requireOwnerMember(context, ownerAccountId, options = {}) 
           status: true,
           createdAt: true,
           updatedAt: true,
+          subscription: { select: ENTITLEMENT_FIELDS },
         },
       },
     },
@@ -285,14 +323,18 @@ export async function requireOwnerMember(context, ownerAccountId, options = {}) 
     throw new NotFoundError(MESSAGES.OWNER_ACCOUNT_NOT_FOUND);
   }
 
-  const { ownerAccount, ...membership } = row;
-  const error = memberAccessError(membership, ownerAccount.status, options);
+  const {
+    ownerAccount: { subscription, ...ownerAccount },
+    ...membership
+  } = row;
+  const entitlement = computeEntitlement(ownerAccount.status, subscription);
+  const error = memberAccessError(membership, ownerAccount.status, options, entitlement);
 
   if (error) {
     throw error;
   }
 
-  return { user, membership, ownerAccount };
+  return { user, membership, ownerAccount, entitlement };
 }
 
 /**
@@ -312,19 +354,19 @@ export async function requireHouseAccess(context, houseId, options = {}) {
   }
 
   const { ownerAccount: accountRow, ...house } = row;
-  const { ownerAccount, membership } = splitOwnerAccount(accountRow);
+  const { ownerAccount, membership, entitlement } = splitOwnerAccount(accountRow);
 
   if (!membership) {
     throw new NotFoundError(MESSAGES.HOUSE_NOT_FOUND);
   }
 
-  const error = memberAccessError(membership, ownerAccount.status, options);
+  const error = memberAccessError(membership, ownerAccount.status, options, entitlement);
 
   if (error) {
     throw error;
   }
 
-  return { user, house, membership, ownerAccount };
+  return { user, house, membership, ownerAccount, entitlement };
 }
 
 /**
@@ -357,6 +399,7 @@ export async function requireAssignmentAccess(context, assignmentId, options = {
     user,
     assignment: parts.assignment,
     ownerAccount: parts.ownerAccount,
+    entitlement: parts.entitlement,
     ...access,
   };
 }
@@ -394,6 +437,7 @@ export async function requireIssueAccess(context, issueId, options = {}) {
     issue,
     assignment: parts.assignment,
     ownerAccount: parts.ownerAccount,
+    entitlement: parts.entitlement,
     ...access,
   };
 }
@@ -431,6 +475,7 @@ export async function requireReceiptAccess(context, receiptId, options = {}) {
     receipt,
     assignment: parts.assignment,
     ownerAccount: parts.ownerAccount,
+    entitlement: parts.entitlement,
     ...access,
   };
 }
@@ -456,19 +501,19 @@ export async function requireInvitationAccess(context, invitationId, options = {
   }
 
   const { house, ...invitation } = row;
-  const { ownerAccount, membership } = splitOwnerAccount(house.ownerAccount);
+  const { ownerAccount, membership, entitlement } = splitOwnerAccount(house.ownerAccount);
 
   if (!membership) {
     throw new NotFoundError(MESSAGES.INVITATION_NOT_FOUND);
   }
 
-  const error = memberAccessError(membership, ownerAccount.status, options);
+  const error = memberAccessError(membership, ownerAccount.status, options, entitlement);
 
   if (error) {
     throw error;
   }
 
-  return { user, invitation, houseName: house.name, membership, ownerAccount };
+  return { user, invitation, houseName: house.name, membership, ownerAccount, entitlement };
 }
 
 function memberAssignmentFilter(userId, roles, statuses) {

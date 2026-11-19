@@ -1,6 +1,8 @@
 import { createSchema } from "graphql-yoga";
 
 import { scalarResolvers, scalarTypeDefs } from "../lib/scalars.js";
+import { billingResolvers } from "./billing/resolversBilling.js";
+import { billingTypeDefs } from "./billing/typeDefsBilling.js";
 import { houseResolvers } from "./house/resolversHouse.js";
 import { houseTypeDefs } from "./house/typeDefsHouse.js";
 import { invitationResolvers } from "./invitation/resolversInvitation.js";
@@ -40,6 +42,7 @@ export const schema = createSchema({
     invitationTypeDefs,
     receiptTypeDefs,
     issueTypeDefs,
+    billingTypeDefs,
   ],
   resolvers: [
     scalarResolvers,
@@ -51,5 +54,6 @@ export const schema = createSchema({
     invitationResolvers,
     receiptResolvers,
     issueResolvers,
+    billingResolvers,
   ],
 });

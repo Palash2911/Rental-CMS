@@ -10,6 +10,10 @@ const DEFAULT_PORT = 9000;
 const MIN_PORT = 1;
 const MAX_PORT = 65535;
 const POSTGRES_PROTOCOL = /^postgres(ql)?$/;
+const HTTP_PROTOCOL = /^https?$/;
+const STRIPE_SECRET_KEY_PATTERN = /^(sk|rk)_(test|live)_\S+$/;
+const STRIPE_LIVE_KEY_PATTERN = /^(sk|rk)_live_/;
+const STRIPE_WEBHOOK_SECRET_PATTERN = /^whsec_\S+$/;
 
 const VARIABLE_NAMES = Object.freeze([
   "NODE_ENV",
@@ -18,6 +22,11 @@ const VARIABLE_NAMES = Object.freeze([
   "GOOGLE_APPLICATION_CREDENTIALS",
   "FIREBASE_SERVICE_ACCOUNT_JSON",
   "FIREBASE_AUTH_EMULATOR_HOST",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_CHECKOUT_SUCCESS_URL",
+  "STRIPE_CHECKOUT_CANCEL_URL",
+  "STRIPE_PORTAL_RETURN_URL",
 ]);
 
 const REQUIREMENTS = Object.freeze({
@@ -27,6 +36,11 @@ const REQUIREMENTS = Object.freeze({
   GOOGLE_APPLICATION_CREDENTIALS: "must be a file path",
   FIREBASE_SERVICE_ACCOUNT_JSON: "must be a JSON string",
   FIREBASE_AUTH_EMULATOR_HOST: "must be a host:port string",
+  STRIPE_SECRET_KEY: "must be a Stripe secret or restricted key (sk_ or rk_)",
+  STRIPE_WEBHOOK_SECRET: "must be a Stripe webhook signing secret (whsec_)",
+  STRIPE_CHECKOUT_SUCCESS_URL: "must be an http:// or https:// URL",
+  STRIPE_CHECKOUT_CANCEL_URL: "must be an http:// or https:// URL",
+  STRIPE_PORTAL_RETURN_URL: "must be an http:// or https:// URL",
 });
 
 const MISSING_REASON = "is required";
@@ -45,6 +59,11 @@ const envSchema = z.object({
   GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
   FIREBASE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   FIREBASE_AUTH_EMULATOR_HOST: z.string().optional(),
+  STRIPE_SECRET_KEY: z.string().regex(STRIPE_SECRET_KEY_PATTERN),
+  STRIPE_WEBHOOK_SECRET: z.string().regex(STRIPE_WEBHOOK_SECRET_PATTERN),
+  STRIPE_CHECKOUT_SUCCESS_URL: z.url({ protocol: HTTP_PROTOCOL }),
+  STRIPE_CHECKOUT_CANCEL_URL: z.url({ protocol: HTTP_PROTOCOL }),
+  STRIPE_PORTAL_RETURN_URL: z.url({ protocol: HTTP_PROTOCOL }),
 });
 
 // Blank entries such as `PORT=` in an env file count as unset.
@@ -95,6 +114,21 @@ function emulatorProblems(rawEnv) {
   return [];
 }
 
+// A live key outside production would charge real cards from a dev machine or the test suite.
+function stripeKeyProblems(rawEnv) {
+  const key = rawEnv.STRIPE_SECRET_KEY;
+
+  if (
+    typeof key === "string" &&
+    STRIPE_LIVE_KEY_PATTERN.test(key) &&
+    rawEnv.NODE_ENV !== NODE_ENVS.PRODUCTION
+  ) {
+    return ["STRIPE_SECRET_KEY must be a test-mode key unless NODE_ENV is production"];
+  }
+
+  return [];
+}
+
 /**
  * Validates an environment object (shaped like process.env) and returns the frozen config.
  * Throws an Error listing each failing variable by name and reason, never its value.
@@ -107,6 +141,7 @@ export function parseConfig(source) {
     ...(result.success ? [] : schemaProblems(result.error.issues, rawEnv)),
     ...credentialProblems(rawEnv),
     ...emulatorProblems(rawEnv),
+    ...stripeKeyProblems(rawEnv),
   ];
 
   if (problems.length > 0) {
@@ -125,6 +160,11 @@ export function parseConfig(source) {
     databaseUrl: env.DATABASE_URL,
     googleApplicationCredentials: env.GOOGLE_APPLICATION_CREDENTIALS,
     firebaseServiceAccountJson: env.FIREBASE_SERVICE_ACCOUNT_JSON,
+    stripeSecretKey: env.STRIPE_SECRET_KEY,
+    stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET,
+    stripeCheckoutSuccessUrl: env.STRIPE_CHECKOUT_SUCCESS_URL,
+    stripeCheckoutCancelUrl: env.STRIPE_CHECKOUT_CANCEL_URL,
+    stripePortalReturnUrl: env.STRIPE_PORTAL_RETURN_URL,
   });
 }
 

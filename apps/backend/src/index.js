@@ -10,8 +10,23 @@ import { createContextFactory } from "./graphql/context.js";
 import { schema } from "./graphql/rootSchema.js";
 import { config } from "./lib/config.js";
 import prisma from "./prisma.js";
+import { createStripeClient, createStripeGateway } from "./stripe/gateway.js";
+import {
+  createStripeWebhookHandler,
+  STRIPE_WEBHOOK_PATH,
+} from "./stripe/webhook.js";
 
 const PORT = config.port;
+
+const billingGateway = createStripeGateway(
+  createStripeClient(config.stripeSecretKey),
+);
+
+const handleStripeWebhook = createStripeWebhookHandler({
+  prisma,
+  gateway: billingGateway,
+  webhookSecret: config.stripeWebhookSecret,
+});
 
 // Deny by default: only development exposes GraphiQL and introspection; test and production keep both off.
 const isDevelopment = config.isDevelopment;
@@ -28,13 +43,26 @@ const yoga = createYoga({
     prisma,
     verifyIdToken,
     hasLiveSuperAdminClaim,
+    billingGateway,
   }),
   maskedErrors: { isDev: isDevelopment },
   graphiql: isDevelopment,
   plugins: isDevelopment ? [] : [disableIntrospection],
 });
 
-const server = createServer(yoga);
+function requestPath(request) {
+  return new URL(request.url, "http://localhost").pathname;
+}
+
+// The Stripe webhook is served outside Yoga so its raw body reaches signature verification
+// unchanged. Every other request goes to Yoga.
+const server = createServer((request, response) => {
+  if (requestPath(request) === STRIPE_WEBHOOK_PATH) {
+    return handleStripeWebhook(request, response);
+  }
+
+  return yoga(request, response);
+});
 
 server.listen(PORT, () => {
   console.info(

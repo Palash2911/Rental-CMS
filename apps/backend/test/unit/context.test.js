@@ -7,12 +7,15 @@ import {
   HTTP_STATUS,
   UnauthenticatedError,
 } from "../../src/lib/errors.js";
+import { unexpectedStripeGateway } from "../support/stripe.js";
 
 const PRISMA = Object.freeze({ name: "prisma stand-in" });
 
 function hasLiveSuperAdminClaim() {
   return Promise.resolve(false);
 }
+
+const billingGateway = unexpectedStripeGateway();
 
 function requestWith(authorization) {
   const headers = authorization === undefined ? {} : { authorization };
@@ -33,6 +36,7 @@ function buildContext({ verifyIdToken, authorization }) {
     prisma: PRISMA,
     verifyIdToken,
     hasLiveSuperAdminClaim,
+    billingGateway,
   });
   return createContext({ request: requestWith(authorization) });
 }
@@ -52,6 +56,7 @@ describe("createContextFactory", () => {
     prisma: PRISMA,
     verifyIdToken: async () => ({ uid: "uid-1" }),
     hasLiveSuperAdminClaim,
+    billingGateway,
   };
 
   it("throws TypeError when called without dependencies", () => {
@@ -66,6 +71,9 @@ describe("createContextFactory", () => {
     ["verifyIdToken", "not a function"],
     ["hasLiveSuperAdminClaim", undefined],
     ["hasLiveSuperAdminClaim", {}],
+    ["billingGateway", undefined],
+    ["billingGateway", null],
+    ["billingGateway", { createCheckoutSession: () => null }],
   ]) {
     it(`throws TypeError when ${field} is ${value === null ? "null" : typeof value}`, () => {
       assert.throws(
@@ -88,7 +96,7 @@ describe("createContext", () => {
 
     assert.equal(calls.length, 0);
     assert.deepEqual(
-      { ...context, hasLiveSuperAdminClaim: undefined },
+      { ...context, hasLiveSuperAdminClaim: undefined, billingGateway: undefined },
       {
         prisma: PRISMA,
         userId: null,
@@ -97,6 +105,7 @@ describe("createContext", () => {
         name: null,
         isSuperAdmin: false,
         hasLiveSuperAdminClaim: undefined,
+        billingGateway: undefined,
       },
     );
   });
@@ -267,5 +276,18 @@ describe("createContext", () => {
 
     assert.equal(anonymous.hasLiveSuperAdminClaim, hasLiveSuperAdminClaim);
     assert.equal(signedIn.hasLiveSuperAdminClaim, hasLiveSuperAdminClaim);
+  });
+
+  it("puts the injected billingGateway on the context, signed in or anonymous", async () => {
+    const { verify } = recordingVerifier();
+
+    const anonymous = await buildContext({ verifyIdToken: verify });
+    const signedIn = await buildContext({
+      verifyIdToken: verify,
+      authorization: "Bearer token-abc",
+    });
+
+    assert.equal(anonymous.billingGateway, billingGateway);
+    assert.equal(signedIn.billingGateway, billingGateway);
   });
 });

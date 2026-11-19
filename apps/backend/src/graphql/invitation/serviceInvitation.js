@@ -10,6 +10,12 @@ import {
   logActivity,
 } from "../../lib/activity.js";
 import {
+  ACCESS,
+  computeEntitlement,
+  ENTITLEMENT_FIELDS,
+  READ_ONLY_MESSAGE,
+} from "../../lib/entitlement.js";
+import {
   ConflictError,
   ForbiddenError,
   isRecordNotFound,
@@ -59,6 +65,7 @@ const MESSAGES = Object.freeze({
   ACCOUNT_NOT_APPROVED:
     "This action is not available for the owner account in its current state.",
   HOUSE_FULL: "This house has no free tenant places.",
+  PLAN_LIMIT: "This owner account has reached the tenant limit of its plan.",
   ALREADY_ASSIGNED: "You already have an active tenancy on this house.",
 });
 
@@ -388,6 +395,18 @@ async function lockUser(tx, userId) {
   await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
 }
 
+// Billing adds the owner account between the two: House, then OwnerAccount, then User. The
+// plan's tenant limit spans every house of the account, so two accepts into different houses
+// must serialize here. FOR NO KEY UPDATE still lets inserts that reference the account (new
+// houses) take their key-share lock, so it does not block unrelated writes.
+async function lockOwnerAccountOfHouse(tx, houseId) {
+  await tx.$queryRaw`
+    SELECT oa.id FROM "OwnerAccount" oa
+    JOIN "House" h ON h."ownerAccountId" = oa.id
+    WHERE h.id = ${houseId}
+    FOR NO KEY UPDATE OF oa`;
+}
+
 async function loadAcceptTarget(tx, id) {
   return tx.invitation.findUnique({
     where: { id },
@@ -401,21 +420,36 @@ async function loadAcceptTarget(tx, id) {
           id: true,
           status: true,
           maxTenants: true,
-          ownerAccount: { select: { status: true } },
+          ownerAccountId: true,
+          ownerAccount: {
+            select: { status: true, subscription: { select: ENTITLEMENT_FIELDS } },
+          },
         },
       },
     },
   });
 }
 
+// Read after the owner account lock, so a concurrent webhook or plan change cannot slip in
+// between this check and the insert.
 function assertHouseOpen(house) {
-  if (house.ownerAccount.status !== OwnerAccountStatus.APPROVED) {
+  const { status, subscription } = house.ownerAccount;
+
+  if (status !== OwnerAccountStatus.APPROVED) {
     throw new ForbiddenError(MESSAGES.ACCOUNT_NOT_APPROVED);
+  }
+
+  const entitlement = computeEntitlement(status, subscription);
+
+  if (entitlement.access === ACCESS.READ_ONLY) {
+    throw new ForbiddenError(READ_ONLY_MESSAGE);
   }
 
   if (house.status === HouseStatus.INACTIVE) {
     throw new ConflictError(MESSAGES.HOUSE_INACTIVE);
   }
+
+  return entitlement;
 }
 
 async function findOrCreateProfile(tx, userId) {
@@ -436,7 +470,26 @@ async function findOrCreateProfile(tx, userId) {
   return { id: profile.id, created: true };
 }
 
-async function assertCanJoin(tx, { house, tenantProfileId }) {
+// The plan limit counts ACTIVE and NOTICE_PERIOD assignments across every house of the
+// account. A downgrade below the current count removes nobody; it only blocks new accepts.
+async function assertWithinPlanLimit(tx, { house, entitlement }) {
+  if (entitlement.tenantLimit === null) {
+    return;
+  }
+
+  const activeOnAccount = await tx.tenantAssignment.count({
+    where: {
+      status: { in: ACTIVE_ASSIGNMENT_STATUSES },
+      house: { ownerAccountId: house.ownerAccountId },
+    },
+  });
+
+  if (activeOnAccount >= entitlement.tenantLimit) {
+    throw new ConflictError(MESSAGES.PLAN_LIMIT);
+  }
+}
+
+async function assertCanJoin(tx, { house, tenantProfileId, entitlement }) {
   const active = await tx.tenantAssignment.findMany({
     where: { houseId: house.id, status: { in: ACTIVE_ASSIGNMENT_STATUSES } },
     select: { tenantProfileId: true },
@@ -449,6 +502,8 @@ async function assertCanJoin(tx, { house, tenantProfileId }) {
   if (active.length >= house.maxTenants) {
     throw new ConflictError(MESSAGES.HOUSE_FULL);
   }
+
+  await assertWithinPlanLimit(tx, { house, entitlement });
 }
 
 async function insertAssignment(tx, data) {
@@ -506,15 +561,20 @@ export function acceptInvitation(context, { actorId, actorEmail, id }) {
     const { houseId } = await findInviteeInvitation(tx, id, actorEmail);
 
     await lockHouse(tx, houseId);
+    await lockOwnerAccountOfHouse(tx, houseId);
     await lockUser(tx, actorId);
 
     const now = new Date();
     const target = await loadAcceptTarget(tx, id);
     assertRespondable(target, now);
-    assertHouseOpen(target.house);
+    const entitlement = assertHouseOpen(target.house);
 
     const profile = await findOrCreateProfile(tx, actorId);
-    await assertCanJoin(tx, { house: target.house, tenantProfileId: profile.id });
+    await assertCanJoin(tx, {
+      house: target.house,
+      tenantProfileId: profile.id,
+      entitlement,
+    });
 
     const assignment = await insertAssignment(tx, {
       tenantProfileId: profile.id,

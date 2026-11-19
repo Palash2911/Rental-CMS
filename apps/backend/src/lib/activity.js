@@ -6,6 +6,7 @@ export const ENTITY_TYPES = Object.freeze({
   TENANT_ASSIGNMENT: "TenantAssignment",
   RECEIPT: "Receipt",
   ISSUE: "Issue",
+  SUBSCRIPTION: "Subscription",
 });
 
 export const ACTIVITY_ACTIONS = Object.freeze({
@@ -21,6 +22,10 @@ export const ACTIVITY_ACTIONS = Object.freeze({
   ACCEPTED: "ACCEPTED",
   DECLINED: "DECLINED",
   EXITED: "EXITED",
+  CHECKOUT_STARTED: "CHECKOUT_STARTED",
+  SYNCED: "SYNCED",
+  ENTERPRISE_SET: "ENTERPRISE_SET",
+  ENTERPRISE_CLEARED: "ENTERPRISE_CLEARED",
 });
 
 /** Writes an ActivityLog row. Call only with a transaction client, inside prisma.$transaction. */

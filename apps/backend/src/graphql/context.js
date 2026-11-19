@@ -12,7 +12,32 @@ function unauthenticated(message) {
   });
 }
 
-function assertDependencies({ prisma, verifyIdToken, hasLiveSuperAdminClaim }) {
+const BILLING_GATEWAY_METHODS = Object.freeze([
+  "createCustomer",
+  "findPriceIdByLookupKey",
+  "createCheckoutSession",
+  "retrieveCheckoutSession",
+  "expireCheckoutSession",
+  "createPortalSession",
+  "retrieveSubscription",
+]);
+
+function assertBillingGateway(billingGateway) {
+  const valid =
+    billingGateway !== null &&
+    typeof billingGateway === "object" &&
+    BILLING_GATEWAY_METHODS.every((name) => typeof billingGateway[name] === "function");
+
+  if (!valid) {
+    throw new TypeError(
+      `createContextFactory requires a billingGateway with ${BILLING_GATEWAY_METHODS.join(", ")}.`,
+    );
+  }
+}
+
+function assertDependencies({ prisma, verifyIdToken, hasLiveSuperAdminClaim, billingGateway }) {
+  assertBillingGateway(billingGateway);
+
   if (prisma === null || typeof prisma !== "object") {
     throw new TypeError("createContextFactory requires a prisma client.");
   }
@@ -38,7 +63,7 @@ function assertDependencies({ prisma, verifyIdToken, hasLiveSuperAdminClaim }) {
  */
 export function createContextFactory(dependencies) {
   assertDependencies(dependencies ?? {});
-  const { prisma, verifyIdToken, hasLiveSuperAdminClaim } = dependencies;
+  const { prisma, verifyIdToken, hasLiveSuperAdminClaim, billingGateway } = dependencies;
 
   /**
    * Builds the per-request GraphQL context from the Authorization header.
@@ -89,6 +114,7 @@ export function createContextFactory(dependencies) {
       name,
       isSuperAdmin,
       hasLiveSuperAdminClaim,
+      billingGateway,
     };
   };
 }
