@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import {
   HouseStatus,
   InvitationStatus,
+  IssueStatus,
   OwnerAccountStatus,
   OwnerMemberRole,
   TenantAssignmentStatus,
@@ -179,4 +180,41 @@ export function expireInvitation(invitation) {
 /** Sets an owner account's status directly (test setup only). */
 export function setAccountStatus(account, status) {
   return prisma.ownerAccount.update({ where: { id: account.id }, data: { status } });
+}
+
+/**
+ * Inserts an issue on an assignment directly (test setup only), with houseId copied from it.
+ * Pass `createdAt` to fix the paging order.
+ */
+export function createIssue(
+  assignment,
+  { status = IssueStatus.OPEN, title = "Leaking tap", description = "The kitchen tap drips.", createdAt } = {},
+) {
+  return prisma.issue.create({
+    data: {
+      tenantAssignmentId: assignment.id,
+      houseId: assignment.houseId,
+      title,
+      description,
+      status,
+      ...(createdAt ? { createdAt } : {}),
+    },
+  });
+}
+
+/** Inserts a receipt on an assignment directly (test setup only). Pass `createdAt` to fix the paging order. */
+export function createReceipt(
+  assignment,
+  { amountCents = 50_000, currency = "AUD", paidAt = new Date("2026-11-01T00:00:00.000Z"), note = null, createdAt } = {},
+) {
+  return prisma.receipt.create({
+    data: {
+      tenantAssignmentId: assignment.id,
+      amountCents,
+      currency,
+      paidAt,
+      note,
+      ...(createdAt ? { createdAt } : {}),
+    },
+  });
 }

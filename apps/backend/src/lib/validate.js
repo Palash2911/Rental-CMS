@@ -9,8 +9,13 @@ const REGEX_FORMAT = "regex";
 const USER_ID_MAX_LENGTH = 128;
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
+// Same pattern and message as zod 4.6.7's deprecated z.cuid() (zod/v4/core/regexes.js), so
+// accepted ids and client messages are unchanged.
+const CUID_PATTERN = /^[cC][0-9a-z]{6,}$/;
+const CUID_MESSAGE = "Invalid cuid";
+
 /** Id rule for models whose ids Prisma generates with cuid() (OwnerAccount, House and the rest). */
-export const cuidIdSchema = z.cuid();
+export const cuidIdSchema = z.string().regex(CUID_PATTERN, CUID_MESSAGE);
 
 /** Id rule for User ids, which are Firebase UIDs, not cuids. */
 export const userIdSchema = z
@@ -51,6 +56,12 @@ export const calendarDateSchema = z.iso
   .refine(isRealCalendarDate, { message: DATE_MESSAGES.INVALID_DATE, abort: true })
   .refine(isYearInRange, DATE_MESSAGES.YEAR_OUT_OF_RANGE)
   .transform(toUtcMidnight);
+
+/**
+ * A calendar date input after the Date scalar parsed it (a Date at UTC midnight). Domain
+ * schemas use this; the format and year rules run in the scalar through calendarDateSchema.
+ */
+export const parsedCalendarDateSchema = z.date();
 
 const SAFE_MESSAGES = Object.freeze({
   UNRECOGNIZED_KEY: "Unrecognized field.",

@@ -28,6 +28,31 @@ export function expectData(result) {
 }
 
 /**
+ * Fires operations together and returns one outcome per operation, in order:
+ * `{ ok: true, data }` or `{ ok: false, code, message }`. Fails the test when an operation
+ * rejects or returns an error with no code (an unmapped error such as a deadlock, 40P01).
+ */
+export async function race(operations) {
+  const settled = await Promise.allSettled(operations.map((operation) => operation()));
+
+  return settled.map((entry, index) => {
+    if (entry.status === "rejected") {
+      assert.fail(`Operation ${index} rejected: ${entry.reason?.message ?? entry.reason}`);
+    }
+
+    const result = entry.value;
+
+    if (!result.errors?.length) {
+      return { ok: true, data: result.data };
+    }
+
+    const [error] = result.errors;
+    assert.ok(error.extensions?.code, `Operation ${index} failed with an unmapped error: ${describeErrors(result.errors)}`);
+    return { ok: false, code: error.extensions.code, message: error.message };
+  });
+}
+
+/**
  * Asserts the first error has `code` (and `message`, when given) and returns it.
  * An error with no code is an unmapped or masked error, which always fails the assertion.
  */

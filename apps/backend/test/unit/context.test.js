@@ -127,12 +127,28 @@ describe("createContext", () => {
     assert.equal(context.userId, "uid-1");
   });
 
-  it("rejects a Bearer header with an empty token with 401 without calling the verifier", async () => {
+  for (const authorization of ["Bearer    ", "Bearer", "bearer", "BEARER", "Bearer  "]) {
+    it(`rejects ${JSON.stringify(authorization)} as a missing token with 401 without calling the verifier`, async () => {
+      const { verify, calls } = recordingVerifier();
+
+      await assert.rejects(
+        buildContext({ verifyIdToken: verify, authorization }),
+        (error) => assertUnauthenticated401(error, "Missing bearer token."),
+      );
+      assert.equal(calls.length, 0);
+    });
+  }
+
+  it("rejects a scheme that only starts with Bearer as a non-Bearer header", async () => {
     const { verify, calls } = recordingVerifier();
 
     await assert.rejects(
-      buildContext({ verifyIdToken: verify, authorization: "Bearer    " }),
-      (error) => assertUnauthenticated401(error, "Missing bearer token."),
+      buildContext({ verifyIdToken: verify, authorization: "Bearertoken-abc" }),
+      (error) =>
+        assertUnauthenticated401(
+          error,
+          "Authorization header must use the Bearer scheme.",
+        ),
     );
     assert.equal(calls.length, 0);
   });

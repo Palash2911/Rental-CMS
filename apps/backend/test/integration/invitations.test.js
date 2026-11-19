@@ -103,20 +103,31 @@ describe("createInvitation", () => {
     assert.ok(result.errors?.length);
   });
 
-  it("validates lease dates", async () => {
+  it("validates that the lease end date is after the start date", async () => {
+    const { owner, house } = await ownerHouse();
+
+    for (const leaseEndDate of ["2026-12-01", "2026-11-30"]) {
+      const error = expectError(await create(owner, house, { leaseEndDate }), "BAD_USER_INPUT");
+      assert.deepEqual(error.extensions.fieldErrors, [{ path: "input.leaseEndDate", message: "The lease end date must be after the lease start date." }]);
+    }
+  });
+
+  it("rejects malformed lease dates in the Date scalar, before the resolver runs", async () => {
     const { owner, house } = await ownerHouse();
     const cases = [
-      [{ leaseEndDate: "2026-12-01" }, "input.leaseEndDate", "The lease end date must be after the lease start date."],
-      [{ leaseEndDate: "2026-11-30" }, "input.leaseEndDate", "The lease end date must be after the lease start date."],
-      [{ leaseStartDate: "2026-02-30" }, "input.leaseStartDate", "Enter a valid calendar date as YYYY-MM-DD."],
-      [{ leaseStartDate: "1999-12-31" }, "input.leaseStartDate", "Dates must fall between 2000 and 2100."],
-      [{ leaseStartDate: "2026-12-01T00:00:00Z" }, "input.leaseStartDate", "Enter a valid calendar date as YYYY-MM-DD."],
+      [{ leaseStartDate: "2026-02-30" }, "leaseStartDate", "Enter a valid calendar date as YYYY-MM-DD."],
+      [{ leaseStartDate: "1999-12-31" }, "leaseStartDate", "Dates must fall between 2000 and 2100."],
+      [{ leaseStartDate: "2026-12-01T00:00:00Z" }, "leaseStartDate", "Enter a valid calendar date as YYYY-MM-DD."],
+      [{ leaseEndDate: "2027-13-01" }, "leaseEndDate", "Enter a valid calendar date as YYYY-MM-DD."],
     ];
 
-    for (const [overrides, path, message] of cases) {
-      const error = expectError(await create(owner, house, overrides), "BAD_USER_INPUT");
-      assert.deepEqual(error.extensions.fieldErrors, [{ path, message }], JSON.stringify(overrides));
+    for (const [overrides, field, message] of cases) {
+      const result = await create(owner, house, overrides);
+      expectError(result, "BAD_USER_INPUT", `Variable "$input" has invalid value at .${field}: ${message}`);
+      assert.equal(result.data, undefined);
     }
+
+    assert.equal(await prisma.invitation.count(), 0);
   });
 
   it("validates the email", async () => {

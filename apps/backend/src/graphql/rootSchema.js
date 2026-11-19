@@ -1,5 +1,6 @@
 import { createSchema } from "graphql-yoga";
 
+import { scalarResolvers, scalarTypeDefs } from "../lib/scalars.js";
 import { houseResolvers } from "./house/resolversHouse.js";
 import { houseTypeDefs } from "./house/typeDefsHouse.js";
 import { invitationResolvers } from "./invitation/resolversInvitation.js";
@@ -30,6 +31,7 @@ const baseTypeDefs = `
 export const schema = createSchema({
   typeDefs: [
     baseTypeDefs,
+    scalarTypeDefs,
     userTypeDefs,
     ownerAccountTypeDefs,
     houseTypeDefs,
@@ -40,6 +42,7 @@ export const schema = createSchema({
     issueTypeDefs,
   ],
   resolvers: [
+    scalarResolvers,
     userResolvers,
     ownerAccountResolvers,
     houseResolvers,

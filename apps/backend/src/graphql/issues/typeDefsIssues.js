@@ -6,8 +6,8 @@ export const issueTypeDefs = `
     title: String!
     description: String!
     status: IssueStatus!
-    createdAt: String!
-    updatedAt: String!
+    createdAt: DateTime!
+    updatedAt: DateTime!
   }
 
   enum IssueStatus {

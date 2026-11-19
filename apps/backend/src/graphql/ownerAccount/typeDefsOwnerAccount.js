@@ -3,8 +3,8 @@ export const ownerAccountTypeDefs = `
     id: ID!
     name: String!
     status: OwnerAccountStatus!
-    createdAt: String!
-    updatedAt: String!
+    createdAt: DateTime!
+    updatedAt: DateTime!
   }
 
   enum OwnerAccountStatus {

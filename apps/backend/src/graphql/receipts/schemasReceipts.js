@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { paginationFields } from "../../lib/pagination.js";
-import { calendarDateSchema, cuidIdSchema } from "../../lib/validate.js";
+import { cuidIdSchema, parsedCalendarDateSchema } from "../../lib/validate.js";
 
 export const AMOUNT_CENTS_RANGE = Object.freeze({ MIN: 1, MAX: 10_000_000 });
 export const DEFAULT_CURRENCY = "AUD";
@@ -32,7 +32,7 @@ function isNotFuture(date) {
   return date.getTime() <= latestPaidAt();
 }
 
-const paidAtSchema = calendarDateSchema.refine(isNotFuture, MESSAGES.PAID_AT_FUTURE);
+const paidAtSchema = parsedCalendarDateSchema.refine(isNotFuture, MESSAGES.PAID_AT_FUTURE);
 
 export const receiptIdSchema = z.object({ id: cuidIdSchema });
 

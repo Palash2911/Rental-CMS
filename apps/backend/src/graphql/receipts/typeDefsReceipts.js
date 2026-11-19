@@ -4,9 +4,9 @@ export const receiptTypeDefs = `
     tenantAssignmentId: ID!
     amountCents: Int!
     currency: String!
-    paidAt: String!
+    paidAt: Date!
     note: String
-    createdAt: String!
+    createdAt: DateTime!
   }
 
   type ReceiptPage {
@@ -18,7 +18,7 @@ export const receiptTypeDefs = `
     tenantAssignmentId: ID!
     amountCents: Int!
     currency: String
-    paidAt: String!
+    paidAt: Date!
     note: String
   }
 

@@ -59,9 +59,6 @@ describe("exitTenantAssignment", () => {
     assert.equal(log.metadata.fromStatus, "ACTIVE");
     assert.equal(log.metadata.toStatus, "EXITED");
     assert.equal(log.metadata.actualExitDate, exited.actualExitDate);
-
-    const stored = await prisma.tenantAssignment.findUnique({ where: { id: assignment.id } });
-    assert.equal(stored.deletionScheduledAt, null);
   });
 
   it("exits a NOTICE_PERIOD assignment", async () => {

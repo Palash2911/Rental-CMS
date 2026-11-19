@@ -6,8 +6,8 @@ export const houseTypeDefs = `
     maxTenants: Int!
     status: HouseStatus!
     ownerAccountId: ID!
-    createdAt: String!
-    updatedAt: String!
+    createdAt: DateTime!
+    updatedAt: DateTime!
   }
 
   enum HouseStatus {

@@ -4,11 +4,11 @@ export const tenantAssignmentTypeDefs = `
     tenantProfileId: ID!
     houseId: ID!
     status: TenantAssignmentStatus!
-    leaseStartDate: String!
-    leaseEndDate: String
-    actualExitDate: String
-    createdAt: String!
-    updatedAt: String!
+    leaseStartDate: Date!
+    leaseEndDate: Date
+    actualExitDate: DateTime
+    createdAt: DateTime!
+    updatedAt: DateTime!
   }
 
   enum TenantAssignmentStatus {

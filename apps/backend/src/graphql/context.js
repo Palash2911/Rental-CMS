@@ -2,6 +2,10 @@ import { HTTP_STATUS, UnauthenticatedError } from "../lib/errors.js";
 
 const BEARER_PREFIX = /^Bearer\s+/i;
 
+// Headers trims surrounding whitespace from values, so "Bearer " with no token
+// arrives as just "Bearer" and must be matched on its own.
+const BEARER_ONLY = /^Bearer$/i;
+
 function unauthenticated(message) {
   return new UnauthenticatedError(message, {
     httpStatus: HTTP_STATUS.UNAUTHORIZED,
@@ -52,6 +56,10 @@ export function createContextFactory(dependencies) {
     let isSuperAdmin = false;
 
     if (authHeader) {
+      if (BEARER_ONLY.test(authHeader)) {
+        throw unauthenticated("Missing bearer token.");
+      }
+
       if (!BEARER_PREFIX.test(authHeader)) {
         throw unauthenticated(
           "Authorization header must use the Bearer scheme.",

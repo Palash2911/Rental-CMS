@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { InvitationStatus } from "../../generated/prisma/enums.ts";
 import { paginationFields } from "../../lib/pagination.js";
-import { calendarDateSchema, cuidIdSchema } from "../../lib/validate.js";
+import { cuidIdSchema, parsedCalendarDateSchema } from "../../lib/validate.js";
 
 const EMAIL_MAX_LENGTH = 254;
 
@@ -33,8 +33,8 @@ export const createInvitationSchema = z.object({
     .object({
       houseId: cuidIdSchema,
       email: normalisedEmailSchema,
-      leaseStartDate: calendarDateSchema,
-      leaseEndDate: calendarDateSchema.nullish(),
+      leaseStartDate: parsedCalendarDateSchema,
+      leaseEndDate: parsedCalendarDateSchema.nullish(),
     })
     .refine(isEndAfterStart, {
       message: MESSAGES.END_BEFORE_START,

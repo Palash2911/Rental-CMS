@@ -79,6 +79,9 @@ model OwnerAccount {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt, id])
+  @@index([deletionScheduledAt])
 }
 
 model OwnerAccountMember {
@@ -94,6 +97,7 @@ model OwnerAccountMember {
   createdAt DateTime @default(now())
 
   @@unique([userId, ownerAccountId])
+  @@index([ownerAccountId])
 }
 
 model House {
@@ -139,8 +143,6 @@ model TenantAssignment {
   leaseStartDate DateTime
   leaseEndDate   DateTime?
   actualExitDate DateTime?
-
-  deletionScheduledAt DateTime?
 
   tenantProfile TenantProfile @relation(fields: [tenantProfileId], references: [id])
   house         House         @relation(fields: [houseId], references: [id])
@@ -237,6 +239,8 @@ model LeaveRequest {
   tenantAssignment TenantAssignment @relation(fields: [tenantAssignmentId], references: [id])
 
   createdAt DateTime @default(now())
+
+  @@index([tenantAssignmentId])
 }
 
 model ActivityLog {
@@ -250,4 +254,7 @@ model ActivityLog {
   metadata          Json?
 
   createdAt DateTime @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([performedByUserId])
 }

@@ -7,13 +7,13 @@ export const invitationTypeDefs = `
     email: String!
     status: InvitationStatus!
     expired: Boolean!
-    leaseStartDate: String!
-    leaseEndDate: String
-    expiresAt: String!
-    respondedAt: String
+    leaseStartDate: Date!
+    leaseEndDate: Date
+    expiresAt: DateTime!
+    respondedAt: DateTime
     acceptedAssignmentId: ID
-    createdAt: String!
-    updatedAt: String!
+    createdAt: DateTime!
+    updatedAt: DateTime!
   }
 
   enum InvitationStatus {
@@ -31,8 +31,8 @@ export const invitationTypeDefs = `
   input CreateInvitationInput {
     houseId: ID!
     email: String!
-    leaseStartDate: String!
-    leaseEndDate: String
+    leaseStartDate: Date!
+    leaseEndDate: Date
   }
 
   extend type Query {

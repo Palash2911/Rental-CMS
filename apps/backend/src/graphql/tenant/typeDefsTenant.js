@@ -3,7 +3,7 @@ export const tenantTypeDefs = `
     id: ID!
     name: String
     email: String!
-    createdAt: String!
+    createdAt: DateTime!
   }
 
   type TenantProfilePage {

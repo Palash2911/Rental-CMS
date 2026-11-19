@@ -3,7 +3,7 @@ export const userTypeDefs = `
     id: ID!
     email: String!
     name: String
-    createdAt: String!
+    createdAt: DateTime!
   }
 
   extend type Query {

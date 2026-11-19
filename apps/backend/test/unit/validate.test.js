@@ -84,6 +84,36 @@ describe("id schemas", () => {
     assert.equal(cuidIdSchema.safeParse("not a cuid").success, false);
   });
 
+  it("matches zod's deprecated z.cuid() on acceptance and messages", () => {
+    const legacy = z.object({ id: z.cuid() });
+    const current = z.object({ id: cuidIdSchema });
+    const samples = [
+      "cjld2cjxh0000qzrmn831i7rn",
+      "Cjld2cjxh0000qzrmn831i7rn",
+      "c123456",
+      "c12345",
+      "cABCDEFG",
+      "xjld2cjxh0000qzrmn831i7rn",
+      "c-12345678",
+      "",
+      " cjld2cjxh0000qzrmn831i7rn",
+      5,
+      null,
+    ];
+
+    const outcome = (schema, id) => {
+      try {
+        return { ok: true, data: validate(schema, { id }) };
+      } catch (error) {
+        return { ok: false, fieldErrors: error.extensions.fieldErrors };
+      }
+    };
+
+    for (const id of samples) {
+      assert.deepEqual(outcome(current, id), outcome(legacy, id), JSON.stringify(id));
+    }
+  });
+
   it("accepts Firebase-style user ids up to 128 characters", () => {
     assert.equal(userIdSchema.safeParse("aB3_-xYz").success, true);
     assert.equal(userIdSchema.safeParse("a".repeat(129)).success, false);
