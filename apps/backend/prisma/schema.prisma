@@ -68,9 +68,10 @@ model User {
   name      String?
   isBlocked Boolean @default(false)
 
-  ownerMemberships OwnerAccountMember[]
-  tenantProfile    TenantProfile?
-  sentInvitations  Invitation[]
+  ownerMemberships      OwnerAccountMember[]
+  tenantProfile         TenantProfile?
+  sentInvitations       Invitation[]
+  sentMemberInvitations MemberInvitation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -86,9 +87,10 @@ model OwnerAccount {
   deletionScheduledAt DateTime?
   deletionExecutedAt  DateTime?
 
-  members      OwnerAccountMember[]
-  houses       House[]
-  subscription Subscription?
+  members           OwnerAccountMember[]
+  memberInvitations MemberInvitation[]
+  houses            House[]
+  subscription      Subscription?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -156,7 +158,36 @@ model OwnerAccountMember {
   createdAt DateTime @default(now())
 
   @@unique([userId, ownerAccountId])
-  @@index([ownerAccountId])
+  // At most one PRIMARY per account. Never use the generated `ownerAccountId` unique input:
+  // it is not unique across all rows (coding standards, section 8).
+  @@unique([ownerAccountId], where: { role: "PRIMARY" })
+  @@index([ownerAccountId, createdAt, id])
+}
+
+// A PRIMARY member's invitation to join the account as CO_OWNER, accepted by the user whose
+// verified email matches. Same lifecycle as Invitation.
+model MemberInvitation {
+  id String @id @default(cuid())
+
+  ownerAccountId  String
+  email           String
+  invitedByUserId String
+
+  status      InvitationStatus @default(PENDING)
+  expiresAt   DateTime
+  respondedAt DateTime?
+
+  ownerAccount OwnerAccount @relation(fields: [ownerAccountId], references: [id])
+  invitedBy    User         @relation(fields: [invitedByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([ownerAccountId, email], where: { status: "PENDING" })
+  @@index([ownerAccountId, createdAt, id])
+  @@index([ownerAccountId, status, createdAt, id])
+  @@index([email, createdAt, id], where: { status: "PENDING" })
+  @@index([invitedByUserId])
 }
 
 model House {

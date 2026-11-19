@@ -131,7 +131,7 @@ export function listAdminOwnerAccounts(context, { status, first, after }) {
 
 // Locking the actor's User row serializes concurrent creates by one user, so the
 // primary-account count cannot be raced past MAX_PRIMARY_ACCOUNTS.
-async function lockUser(tx, userId) {
+export async function lockUser(tx, userId) {
   await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
 }
 

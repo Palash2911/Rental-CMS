@@ -192,6 +192,22 @@ export function createInvitation(
   });
 }
 
+/** Inserts a member invitation directly (test setup only). Defaults: PENDING, expiring in 14 days. */
+export function createMemberInvitation(
+  account,
+  inviter,
+  {
+    email = uniqueEmail("member-invitee"),
+    status = InvitationStatus.PENDING,
+    expiresAt = new Date(Date.now() + INVITATION_EXPIRY_MS),
+    respondedAt = null,
+  } = {},
+) {
+  return prisma.memberInvitation.create({
+    data: { ownerAccountId: account.id, email, invitedByUserId: inviter.id, status, expiresAt, respondedAt },
+  });
+}
+
 /** Inserts `count` PENDING, unexpired invitations to distinct emails in one statement. */
 export function createPendingInvitations(house, inviter, count) {
   const expiresAt = new Date(Date.now() + INVITATION_EXPIRY_MS);

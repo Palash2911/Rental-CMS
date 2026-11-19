@@ -99,6 +99,17 @@ const INVITATION_FIELDS = Object.freeze({
   updatedAt: true,
 });
 
+const MEMBER_INVITATION_FIELDS = Object.freeze({
+  id: true,
+  ownerAccountId: true,
+  email: true,
+  status: true,
+  expiresAt: true,
+  respondedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 const TENANT_PROFILE_FIELDS = Object.freeze({
   id: true,
   userId: true,
@@ -514,6 +525,39 @@ export async function requireInvitationAccess(context, invitationId, options = {
   }
 
   return { user, invitation, houseName: house.name, membership, ownerAccount, entitlement };
+}
+
+/**
+ * Returns `{ user, invitation, membership, ownerAccount, entitlement }` for a member of the
+ * account a member invitation belongs to. Options as requireOwnerMember.
+ * Throws NotFoundError for non-members and ForbiddenError for a disallowed role or status.
+ */
+export async function requireMemberInvitationAccess(context, invitationId, options = {}) {
+  const user = await requireUser(context);
+
+  const row = await context.prisma.memberInvitation.findUnique({
+    where: { id: invitationId },
+    select: { ...MEMBER_INVITATION_FIELDS, ownerAccount: ownerAccountSelect(user.id) },
+  });
+
+  if (!row) {
+    throw new NotFoundError(MESSAGES.INVITATION_NOT_FOUND);
+  }
+
+  const { ownerAccount: accountRow, ...invitation } = row;
+  const { ownerAccount, membership, entitlement } = splitOwnerAccount(accountRow);
+
+  if (!membership) {
+    throw new NotFoundError(MESSAGES.INVITATION_NOT_FOUND);
+  }
+
+  const error = memberAccessError(membership, ownerAccount.status, options, entitlement);
+
+  if (error) {
+    throw error;
+  }
+
+  return { user, invitation, membership, ownerAccount, entitlement };
 }
 
 function memberAssignmentFilter(userId, roles, statuses) {

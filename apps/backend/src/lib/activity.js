@@ -7,6 +7,8 @@ export const ENTITY_TYPES = Object.freeze({
   RECEIPT: "Receipt",
   ISSUE: "Issue",
   SUBSCRIPTION: "Subscription",
+  MEMBER_INVITATION: "MemberInvitation",
+  OWNER_ACCOUNT_MEMBER: "OwnerAccountMember",
 });
 
 export const ACTIVITY_ACTIONS = Object.freeze({
@@ -26,6 +28,9 @@ export const ACTIVITY_ACTIONS = Object.freeze({
   SYNCED: "SYNCED",
   ENTERPRISE_SET: "ENTERPRISE_SET",
   ENTERPRISE_CLEARED: "ENTERPRISE_CLEARED",
+  REMOVED: "REMOVED",
+  LEFT: "LEFT",
+  OWNERSHIP_TRANSFERRED: "OWNERSHIP_TRANSFERRED",
 });
 
 /** Writes an ActivityLog row. Call only with a transaction client, inside prisma.$transaction. */
