@@ -12,6 +12,7 @@ import {
   TenantAssignmentStatus,
 } from "../../src/generated/prisma/enums.ts";
 import { prisma } from "./db.js";
+import { redis as testRedis } from "./redis.js";
 import { unexpectedStripeGateway } from "./stripe.js";
 
 const FIREBASE_UID_LENGTH = 28;
@@ -58,10 +59,10 @@ export function recordingLogger() {
 }
 
 /**
- * Builds a request context for a token, the way createContext would after verifying it, plus
- * the `log` Yoga adds to every request's context.
+ * Builds a request context for a token, the way createContext would after verifying it.
  * Each call returns a new object, so the per-request user cache never leaks between calls.
  */
+// It also carries the `log` Yoga adds to every request's context, and the shared test Redis.
 export function tokenContext({
   userId,
   email = null,
@@ -71,6 +72,7 @@ export function tokenContext({
   liveSuperAdmin = superAdmin,
   billingGateway = unexpectedStripeGateway(),
   log = recordingLogger(),
+  redis = testRedis,
 }) {
   return {
     log,
@@ -82,6 +84,7 @@ export function tokenContext({
     isSuperAdmin: superAdmin,
     hasLiveSuperAdminClaim: async () => liveSuperAdmin,
     billingGateway,
+    redis,
   };
 }
 

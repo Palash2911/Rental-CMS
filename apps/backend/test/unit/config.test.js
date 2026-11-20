@@ -15,6 +15,7 @@ function validEnv(overrides = {}) {
     STRIPE_CHECKOUT_SUCCESS_URL: "http://localhost:3000/billing?checkout=success",
     STRIPE_CHECKOUT_CANCEL_URL: "http://localhost:3000/billing?checkout=cancel",
     STRIPE_PORTAL_RETURN_URL: "http://localhost:3000/billing",
+    REDIS_URL: "redis://:SuperSecretPassword@127.0.0.1:6379/0",
     ...overrides,
   };
 }
@@ -141,5 +142,22 @@ describe("parseConfig", () => {
     const message = configError(validEnv({ PORT: "SuperSecretPassword", FIREBASE_SERVICE_ACCOUNT_JSON: "{\"private_key\":\"SuperSecretPassword\"}" }));
 
     assert.doesNotMatch(message, /SuperSecretPassword/);
+  });
+
+  it("requires a redis:// or rediss:// REDIS_URL", () => {
+    assert.match(configError(validEnv({ REDIS_URL: undefined })), /REDIS_URL is required/);
+    assert.match(configError(validEnv({ REDIS_URL: "http://127.0.0.1:6379" })), /REDIS_URL must be a redis:\/\/ or rediss:\/\/ URL/);
+    assert.doesNotMatch(configError(validEnv({ REDIS_URL: "http://:SuperSecretPassword@x" })), /SuperSecretPassword/);
+
+    assert.equal(parseConfig(validEnv()).redisUrl, "redis://:SuperSecretPassword@127.0.0.1:6379/0");
+    assert.equal(parseConfig(validEnv({ REDIS_URL: "rediss://cache.example.test:6380/0" })).redisUrl, "rediss://cache.example.test:6380/0");
+  });
+
+  it("trusts X-Forwarded-For only when TRUST_PROXY is exactly true", () => {
+    assert.equal(parseConfig(validEnv()).trustProxy, false);
+    assert.equal(parseConfig(validEnv({ TRUST_PROXY: "" })).trustProxy, false);
+    assert.equal(parseConfig(validEnv({ TRUST_PROXY: "false" })).trustProxy, false);
+    assert.equal(parseConfig(validEnv({ TRUST_PROXY: "true" })).trustProxy, true);
+    assert.match(configError(validEnv({ TRUST_PROXY: "yes" })), /TRUST_PROXY must be "true" or "false"/);
   });
 });

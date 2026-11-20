@@ -12,6 +12,7 @@ export const ERROR_CODES = Object.freeze({
   NOT_FOUND: "NOT_FOUND",
   BAD_USER_INPUT: "BAD_USER_INPUT",
   CONFLICT: "CONFLICT",
+  TOO_MANY_REQUESTS: "TOO_MANY_REQUESTS",
   INTERNAL_SERVER_ERROR: "INTERNAL_SERVER_ERROR",
 });
 
@@ -19,9 +20,13 @@ export const ERROR_CODES = Object.freeze({
  * HTTP statuses that request-level code (context.js) may opt into.
  * Resolver and service errors never set one, so they return HTTP 200.
  */
+// TOO_MANY_REQUESTS is also set by the rate limit plugin, which runs before execution.
 export const HTTP_STATUS = Object.freeze({
   UNAUTHORIZED: 401,
+  TOO_MANY_REQUESTS: 429,
 });
+
+const RETRY_AFTER_HEADER = "Retry-After";
 
 const DEFAULT_MESSAGES = Object.freeze({
   UNAUTHENTICATED: "Authentication required.",
@@ -43,11 +48,13 @@ const PRISMA_ERROR_MESSAGES = Object.freeze({
 });
 
 class AppError extends GraphQLError {
-  constructor(message, code, { httpStatus, extensions } = {}) {
+  constructor(message, code, { httpStatus, httpHeaders, extensions } = {}) {
     const allExtensions = { ...extensions, code };
 
     if (httpStatus !== undefined) {
-      allExtensions.http = { status: httpStatus };
+      allExtensions.http = httpHeaders
+        ? { status: httpStatus, headers: httpHeaders }
+        : { status: httpStatus };
     }
 
     super(message, { extensions: allExtensions });
@@ -104,6 +111,25 @@ export class BadUserInputError extends AppError {
 export class ConflictError extends AppError {
   constructor(message = DEFAULT_MESSAGES.CONFLICT) {
     super(message, ERROR_CODES.CONFLICT);
+  }
+}
+
+/**
+ * A rate limit was exceeded. Request-level: always HTTP 429 with a `Retry-After` header, and
+ * `extensions.retryAfterSeconds` for clients that only read the GraphQL body.
+ */
+export class TooManyRequestsError extends AppError {
+  constructor(retryAfterSeconds) {
+    const seconds = Math.max(1, Math.ceil(retryAfterSeconds));
+    super(
+      `Too many requests. Try again in ${seconds} seconds.`,
+      ERROR_CODES.TOO_MANY_REQUESTS,
+      {
+        httpStatus: HTTP_STATUS.TOO_MANY_REQUESTS,
+        httpHeaders: { [RETRY_AFTER_HEADER]: String(seconds) },
+        extensions: { retryAfterSeconds: seconds },
+      },
+    );
   }
 }
 

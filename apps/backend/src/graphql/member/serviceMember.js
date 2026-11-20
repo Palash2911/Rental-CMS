@@ -164,8 +164,8 @@ export function listMyMemberInvitations(context, { actorEmail, first, after }) {
  * Locks the owner account, then re-checks under the lock what the guard checked before it:
  * a status that allows member writes and billing that is not read-only. A block, deletion
  * schedule or webhook that committed after the guard is therefore always seen.
- * `allowReadOnly` skips the billing check, matching the guard option of the same name.
  */
+// `allowReadOnly` skips the billing check, matching the guard option of the same name.
 async function lockWritableAccount(tx, ownerAccountId, { allowReadOnly = false } = {}) {
   const account = await lockOwnerAccount(tx, ownerAccountId);
 
@@ -532,10 +532,11 @@ export function removeMember(context, { actorId, ownerAccountId, userId }) {
 }
 
 /**
- * Removes the actor's own CO_OWNER membership. Returns it. Allowed while billing makes the
- * account read-only. Throws ForbiddenError for the PRIMARY member or an account status that
- * does not allow member writes, and NotFoundError when the actor is no longer a member.
+ * Removes the actor's own CO_OWNER membership. Returns it. Throws ForbiddenError for the
+ * PRIMARY member or an account that does not allow member writes, and NotFoundError when the
+ * actor is no longer a member.
  */
+// Allowed while billing makes the account read-only (project owner); status is still checked.
 export function leaveAccount(context, { actorId, ownerAccountId }) {
   return context.prisma.$transaction(async (tx) => {
     await lockWritableAccount(tx, ownerAccountId, { allowReadOnly: true });
@@ -664,11 +665,11 @@ async function recordCustomerEmailSyncFailure(context, { actorId, ...metadata })
 /**
  * Makes an existing CO_OWNER the PRIMARY member and the actor a CO_OWNER, in one transaction
  * under the OwnerAccount lock, then the new PRIMARY's User lock for the primary-account cap.
- * After the commit, updates the Stripe customer's email (see syncCustomerEmail).
  * Throws ForbiddenError when the actor is no longer PRIMARY or the account does not allow
  * member writes, NotFoundError when the target is not a member, and ConflictError for a
  * transfer to oneself or a target at MAX_PRIMARY_ACCOUNTS.
  */
+// After the commit, updates the Stripe customer's email (see syncCustomerEmail).
 export async function transferOwnership(context, { actorId, ownerAccountId, newPrimaryUserId }) {
   const transfer = await commitOwnershipTransfer(context, {
     actorId,

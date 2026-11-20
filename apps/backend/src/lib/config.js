@@ -14,6 +14,8 @@ const HTTP_PROTOCOL = /^https?$/;
 const STRIPE_SECRET_KEY_PATTERN = /^(sk|rk)_(test|live)_\S+$/;
 const STRIPE_LIVE_KEY_PATTERN = /^(sk|rk)_live_/;
 const STRIPE_WEBHOOK_SECRET_PATTERN = /^whsec_\S+$/;
+const REDIS_PROTOCOL = /^rediss?$/;
+const BOOLEAN_FLAGS = Object.freeze({ TRUE: "true", FALSE: "false" });
 
 const VARIABLE_NAMES = Object.freeze([
   "NODE_ENV",
@@ -27,6 +29,8 @@ const VARIABLE_NAMES = Object.freeze([
   "STRIPE_CHECKOUT_SUCCESS_URL",
   "STRIPE_CHECKOUT_CANCEL_URL",
   "STRIPE_PORTAL_RETURN_URL",
+  "REDIS_URL",
+  "TRUST_PROXY",
 ]);
 
 const REQUIREMENTS = Object.freeze({
@@ -41,6 +45,8 @@ const REQUIREMENTS = Object.freeze({
   STRIPE_CHECKOUT_SUCCESS_URL: "must be an http:// or https:// URL",
   STRIPE_CHECKOUT_CANCEL_URL: "must be an http:// or https:// URL",
   STRIPE_PORTAL_RETURN_URL: "must be an http:// or https:// URL",
+  REDIS_URL: "must be a redis:// or rediss:// URL",
+  TRUST_PROXY: `must be "${BOOLEAN_FLAGS.TRUE}" or "${BOOLEAN_FLAGS.FALSE}"`,
 });
 
 const MISSING_REASON = "is required";
@@ -64,6 +70,8 @@ const envSchema = z.object({
   STRIPE_CHECKOUT_SUCCESS_URL: z.url({ protocol: HTTP_PROTOCOL }),
   STRIPE_CHECKOUT_CANCEL_URL: z.url({ protocol: HTTP_PROTOCOL }),
   STRIPE_PORTAL_RETURN_URL: z.url({ protocol: HTTP_PROTOCOL }),
+  REDIS_URL: z.url({ protocol: REDIS_PROTOCOL }),
+  TRUST_PROXY: z.enum(Object.values(BOOLEAN_FLAGS)).default(BOOLEAN_FLAGS.FALSE),
 });
 
 // Blank entries such as `PORT=` in an env file count as unset.
@@ -165,6 +173,8 @@ export function parseConfig(source) {
     stripeCheckoutSuccessUrl: env.STRIPE_CHECKOUT_SUCCESS_URL,
     stripeCheckoutCancelUrl: env.STRIPE_CHECKOUT_CANCEL_URL,
     stripePortalReturnUrl: env.STRIPE_PORTAL_RETURN_URL,
+    redisUrl: env.REDIS_URL,
+    trustProxy: env.TRUST_PROXY === BOOLEAN_FLAGS.TRUE,
   });
 }
 

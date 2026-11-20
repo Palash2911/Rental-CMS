@@ -15,6 +15,7 @@ import {
   isUniqueViolation,
   mapPrismaError,
   NotFoundError,
+  TooManyRequestsError,
   UnauthenticatedError,
 } from "../../src/lib/errors.js";
 
@@ -55,6 +56,20 @@ describe("error classes", () => {
       assert.equal(masked, error);
     });
   }
+
+  it("TooManyRequestsError is HTTP 429 with a whole-second Retry-After hint", () => {
+    const error = new TooManyRequestsError(12.3);
+
+    assert.ok(error instanceof GraphQLError);
+    assert.equal(error.message, "Too many requests. Try again in 13 seconds.");
+    assert.deepEqual({ ...error.extensions }, {
+      code: ERROR_CODES.TOO_MANY_REQUESTS,
+      retryAfterSeconds: 13,
+      http: { status: HTTP_STATUS.TOO_MANY_REQUESTS, headers: { "Retry-After": "13" } },
+    });
+    assert.equal(maskError(error, MASKED_MESSAGE, false), error);
+    assert.equal(new TooManyRequestsError(0).extensions.retryAfterSeconds, 1);
+  });
 
   it("UnauthenticatedError sets an HTTP status only when asked", () => {
     const error = new UnauthenticatedError("Invalid or expired token.", {

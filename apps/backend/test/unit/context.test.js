@@ -17,6 +17,16 @@ function hasLiveSuperAdminClaim() {
 
 const billingGateway = unexpectedStripeGateway();
 
+// A Redis stand-in that always reports the first hit of a window, so no limit is reached.
+// The real limits and Redis are covered by test/integration/rateLimit.test.js.
+const WINDOW_MS = 60_000;
+const redis = Object.freeze({
+  rateLimitHit: async () => [1, WINDOW_MS],
+  get: async () => null,
+  set: async () => "OK",
+  del: async () => 0,
+});
+
 function requestWith(authorization) {
   const headers = authorization === undefined ? {} : { authorization };
   return new Request("http://localhost/graphql", { headers });
@@ -37,6 +47,7 @@ function buildContext({ verifyIdToken, authorization }) {
     verifyIdToken,
     hasLiveSuperAdminClaim,
     billingGateway,
+    redis,
   });
   return createContext({ request: requestWith(authorization) });
 }
@@ -57,6 +68,7 @@ describe("createContextFactory", () => {
     verifyIdToken: async () => ({ uid: "uid-1" }),
     hasLiveSuperAdminClaim,
     billingGateway,
+    redis,
   };
 
   it("throws TypeError when called without dependencies", () => {
@@ -74,6 +86,10 @@ describe("createContextFactory", () => {
     ["billingGateway", undefined],
     ["billingGateway", null],
     ["billingGateway", { createCheckoutSession: () => null }],
+    ["redis", undefined],
+    ["redis", null],
+    ["redis", { get: () => null }],
+    ["trustProxy", "true"],
   ]) {
     it(`throws TypeError when ${field} is ${value === null ? "null" : typeof value}`, () => {
       assert.throws(
@@ -106,6 +122,7 @@ describe("createContext", () => {
         isSuperAdmin: false,
         hasLiveSuperAdminClaim: undefined,
         billingGateway: undefined,
+        redis,
       },
     );
   });

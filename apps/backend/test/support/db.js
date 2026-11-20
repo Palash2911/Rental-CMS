@@ -1,5 +1,6 @@
 import { after } from "node:test";
 
+import { resetRedis } from "./redis.js";
 import { assertTestEnvironment } from "./safety.js";
 
 assertTestEnvironment();
@@ -28,6 +29,9 @@ export async function resetDatabase() {
   assertTestEnvironment();
   truncateStatement ??= await buildTruncateStatement();
   await prisma.$executeRawUnsafe(truncateStatement);
+  // Redis database 15 holds the user cache and rate limit counters; they must not outlive
+  // the rows they describe.
+  await resetRedis();
 }
 
 after(() => prisma.$disconnect());

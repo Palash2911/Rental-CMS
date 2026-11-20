@@ -5,6 +5,11 @@ import { assertTestEnvironment } from "../support/safety.js";
 
 const TEST_URL = "postgresql://user:SuperSecretPassword@db.example.test/rental_cms_test";
 const DEV_URL = "postgresql://user:SuperSecretPassword@db.example.test/rental_cms";
+const REDIS_TEST_URL = "redis://:SuperSecretPassword@127.0.0.1:6379/15";
+
+function testEnv(overrides = {}) {
+  return { NODE_ENV: "test", DATABASE_URL: TEST_URL, REDIS_URL: REDIS_TEST_URL, ...overrides };
+}
 
 function refusal(env, options) {
   try {
@@ -18,9 +23,32 @@ function refusal(env, options) {
 
 describe("test database safety check", () => {
   it("allows NODE_ENV test with a database ending in _test", () => {
-    assert.doesNotThrow(() =>
-      assertTestEnvironment({ NODE_ENV: "test", DATABASE_URL: TEST_URL, DIRECT_URL: TEST_URL }),
-    );
+    assert.doesNotThrow(() => assertTestEnvironment(testEnv({ DIRECT_URL: TEST_URL })));
+  });
+
+  it("allows only Redis database 15", () => {
+    assert.doesNotThrow(() => assertTestEnvironment(testEnv()));
+    assert.doesNotThrow(() => assertTestEnvironment(testEnv({ REDIS_URL: "rediss://cache.example.test:6380/15" })));
+
+    for (const url of [
+      "redis://127.0.0.1:6379",
+      "redis://127.0.0.1:6379/",
+      "redis://127.0.0.1:6379/0",
+      "redis://127.0.0.1:6379/1",
+      "redis://127.0.0.1:6379/150",
+      "redis://127.0.0.1:6379/15/",
+      "redis://127.0.0.1:6379/15?db=0",
+      "http://127.0.0.1:6379/15",
+      "not a url",
+    ]) {
+      assert.match(refusal(testEnv({ REDIS_URL: url })), /REDIS_URL must be a redis:\/\/ URL selecting database 15/, url);
+    }
+
+    assert.match(refusal(testEnv({ REDIS_URL: undefined })), /REDIS_URL is not set/);
+  });
+
+  it("never includes the Redis URL in the message", () => {
+    assert.doesNotMatch(refusal(testEnv({ REDIS_URL: "redis://:SuperSecretPassword@127.0.0.1:6379/0" })), /SuperSecretPassword/);
   });
 
   it("refuses when NODE_ENV is not test", () => {

@@ -1,20 +1,15 @@
-import { NoSchemaIntrospectionCustomRule } from "graphql";
-import { createYoga } from "graphql-yoga";
 import { createServer } from "node:http";
 
+import { createApp } from "./app.js";
 import {
   hasLiveSuperAdminClaim,
   verifyIdToken,
 } from "./firebase/identity.js";
-import { createContextFactory } from "./graphql/context.js";
-import { schema } from "./graphql/rootSchema.js";
 import { config } from "./lib/config.js";
 import prisma from "./prisma.js";
+import { closeRedisClient, createRedisClient } from "./redis.js";
 import { createStripeClient, createStripeGateway } from "./stripe/gateway.js";
-import {
-  createStripeWebhookHandler,
-  STRIPE_WEBHOOK_PATH,
-} from "./stripe/webhook.js";
+import { createStripeWebhookHandler } from "./stripe/webhook.js";
 
 const PORT = config.port;
 
@@ -31,49 +26,37 @@ const handleStripeWebhook = createStripeWebhookHandler({
 // Deny by default: only development exposes GraphiQL and introspection; test and production keep both off.
 const isDevelopment = config.isDevelopment;
 
-const disableIntrospection = {
-  onValidate({ addValidationRule }) {
-    addValidationRule(NoSchemaIntrospectionCustomRule);
-  },
-};
+// Connection errors repeat while Redis is down (ioredis keeps reconnecting); requests carry
+// on, failing open, and each one also logs through its request logger.
+const redis = createRedisClient(config.redisUrl, {
+  onError: (error) => app.yoga.log.warn({ err: error }, "Redis connection error."),
+});
 
-const yoga = createYoga({
-  schema,
-  context: createContextFactory({
+const app = createApp({
+  contextDependencies: {
     prisma,
     verifyIdToken,
     hasLiveSuperAdminClaim,
     billingGateway,
-  }),
-  maskedErrors: { isDev: isDevelopment },
-  graphiql: isDevelopment,
-  plugins: isDevelopment ? [] : [disableIntrospection],
+    redis,
+    trustProxy: config.trustProxy,
+  },
+  handleStripeWebhook,
+  isDevelopment,
 });
 
-function requestPath(request) {
-  return new URL(request.url, "http://localhost").pathname;
-}
-
-// The Stripe webhook is served outside Yoga so its raw body reaches signature verification
-// unchanged. Every other request goes to Yoga.
-const server = createServer((request, response) => {
-  if (requestPath(request) === STRIPE_WEBHOOK_PATH) {
-    return handleStripeWebhook(request, response);
-  }
-
-  return yoga(request, response);
-});
+const server = createServer(app.handleRequest);
 
 server.listen(PORT, () => {
   console.info(
-    `Server is running on http://localhost:${PORT}${yoga.graphqlEndpoint}`,
+    `Server is running on http://localhost:${PORT}${app.yoga.graphqlEndpoint}`,
   );
 });
 
 async function shutdown(signal) {
   console.info(`${signal} received, shutting down...`);
   server.close(async () => {
-    await prisma.$disconnect();
+    await Promise.all([prisma.$disconnect(), closeRedisClient(redis)]);
     process.exit(0);
   });
 
