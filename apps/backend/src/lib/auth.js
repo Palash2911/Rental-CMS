@@ -58,6 +58,7 @@ const MESSAGES = Object.freeze({
   ASSIGNMENT_NOT_FOUND: "Tenant assignment not found.",
   ISSUE_NOT_FOUND: "Issue not found.",
   RECEIPT_NOT_FOUND: "Receipt not found.",
+  LEAVE_REQUEST_NOT_FOUND: "Leave request not found.",
   INVITATION_NOT_FOUND: "Invitation not found.",
   TENANT_PROFILE_NOT_FOUND: "Tenant profile not found.",
 });
@@ -80,7 +81,20 @@ const ASSIGNMENT_FIELDS = Object.freeze({
   status: true,
   leaseStartDate: true,
   leaseEndDate: true,
+  plannedExitDate: true,
   actualExitDate: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+const LEAVE_REQUEST_FIELDS = Object.freeze({
+  id: true,
+  tenantAssignmentId: true,
+  houseId: true,
+  status: true,
+  requestedExitDate: true,
+  reason: true,
+  respondedAt: true,
   createdAt: true,
   updatedAt: true,
 });
@@ -484,6 +498,44 @@ export async function requireReceiptAccess(context, receiptId, options = {}) {
   return {
     user,
     receipt,
+    assignment: parts.assignment,
+    ownerAccount: parts.ownerAccount,
+    entitlement: parts.entitlement,
+    ...access,
+  };
+}
+
+/**
+ * Returns `{ user, leaveRequest, assignment, ownerAccount, accessAs, membership, tenantAccess }`.
+ * Options and errors as requireAssignmentAccess, resolved through the request's assignment.
+ */
+export async function requireLeaveRequestAccess(context, leaveRequestId, options = {}) {
+  const user = await requireUser(context);
+
+  const row = await context.prisma.leaveRequest.findUnique({
+    where: { id: leaveRequestId },
+    select: {
+      ...LEAVE_REQUEST_FIELDS,
+      tenantAssignment: { select: assignmentSelect(user.id) },
+    },
+  });
+
+  if (!row) {
+    throw new NotFoundError(MESSAGES.LEAVE_REQUEST_NOT_FOUND);
+  }
+
+  const { tenantAssignment, ...leaveRequest } = row;
+  const parts = splitAssignment(tenantAssignment);
+  const access = resolveAssignmentAccess(
+    user,
+    parts,
+    options,
+    MESSAGES.LEAVE_REQUEST_NOT_FOUND,
+  );
+
+  return {
+    user,
+    leaveRequest,
     assignment: parts.assignment,
     ownerAccount: parts.ownerAccount,
     entitlement: parts.entitlement,

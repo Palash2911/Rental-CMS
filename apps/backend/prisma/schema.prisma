@@ -41,6 +41,13 @@ enum InvitationStatus {
   REVOKED
 }
 
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
 enum IssueStatus {
   OPEN
   IN_PROGRESS
@@ -68,10 +75,11 @@ model User {
   name      String?
   isBlocked Boolean @default(false)
 
-  ownerMemberships      OwnerAccountMember[]
-  tenantProfile         TenantProfile?
-  sentInvitations       Invitation[]
-  sentMemberInvitations MemberInvitation[]
+  ownerMemberships       OwnerAccountMember[]
+  tenantProfile          TenantProfile?
+  sentInvitations        Invitation[]
+  sentMemberInvitations  MemberInvitation[]
+  respondedLeaveRequests LeaveRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -204,6 +212,7 @@ model House {
   tenantAssignments TenantAssignment[]
   invitations       Invitation[]
   issues            Issue[]
+  leaveRequests     LeaveRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -230,9 +239,11 @@ model TenantAssignment {
 
   status TenantAssignmentStatus @default(ACTIVE)
 
-  leaseStartDate DateTime
-  leaseEndDate   DateTime?
-  actualExitDate DateTime?
+  leaseStartDate  DateTime
+  leaseEndDate    DateTime?
+  // Calendar date at UTC midnight; set while NOTICE_PERIOD, cleared when notice is withdrawn.
+  plannedExitDate DateTime?
+  actualExitDate  DateTime?
 
   tenantProfile TenantProfile @relation(fields: [tenantProfileId], references: [id])
   house         House         @relation(fields: [houseId], references: [id])
@@ -318,19 +329,38 @@ model Issue {
   @@index([houseId, status, createdAt, id])
 }
 
+// A tenant's request to end their lease on a date. Approval moves the assignment to
+// NOTICE_PERIOD; the exit itself stays a manual owner action.
 model LeaveRequest {
   id String @id @default(cuid())
 
   tenantAssignmentId String
-  reason             String
+  // Denormalised from the immutable TenantAssignment.houseId, for leaveRequestsByHouse.
+  houseId            String
+  status             LeaveRequestStatus @default(PENDING)
+  // Calendar date at UTC midnight.
   requestedExitDate  DateTime
-  approved           Boolean  @default(false)
+  reason             String?
+
+  // When, and by whom, the request left PENDING.
+  respondedAt       DateTime?
+  respondedByUserId String?
 
   tenantAssignment TenantAssignment @relation(fields: [tenantAssignmentId], references: [id])
+  house            House            @relation(fields: [houseId], references: [id])
+  respondedBy      User?            @relation(fields: [respondedByUserId], references: [id])
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@index([tenantAssignmentId])
+  // At most one PENDING request per assignment. Never use the generated
+  // `tenantAssignmentId` unique input: it is not unique across all rows (coding standards, section 8).
+  @@unique([tenantAssignmentId], where: { status: "PENDING" })
+  @@index([tenantAssignmentId, createdAt, id])
+  @@index([tenantAssignmentId, status, createdAt, id])
+  @@index([houseId, createdAt, id])
+  @@index([houseId, status, createdAt, id])
+  @@index([respondedByUserId])
 }
 
 model ActivityLog {

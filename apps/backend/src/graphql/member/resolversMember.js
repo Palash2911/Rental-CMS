@@ -33,9 +33,12 @@ const PRIMARY_WRITE = Object.freeze({
   statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE,
 });
 
-const ANY_MEMBER_WRITE = Object.freeze({
+// A co-owner can always leave, even while billing has made the account read-only, the same
+// as scheduling or cancelling the account's deletion.
+const ANY_MEMBER_LEAVE = Object.freeze({
   roles: ROLES.ANY,
   statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE,
+  allowReadOnly: true,
 });
 
 export const memberResolvers = {
@@ -106,7 +109,7 @@ export const memberResolvers = {
     },
 
     leaveAccount: async (_parent, args, context) => {
-      const { user } = await requireOwnerMember(context, args.ownerAccountId, ANY_MEMBER_WRITE);
+      const { user } = await requireOwnerMember(context, args.ownerAccountId, ANY_MEMBER_LEAVE);
       const input = validate(ownerAccountIdSchema, args);
       return memberService.leaveAccount(context, { ...input, actorId: user.id });
     },

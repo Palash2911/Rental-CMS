@@ -20,6 +20,7 @@ const BILLING_GATEWAY_METHODS = Object.freeze([
   "expireCheckoutSession",
   "createPortalSession",
   "retrieveSubscription",
+  "updateCustomerEmail",
 ]);
 
 function assertBillingGateway(billingGateway) {

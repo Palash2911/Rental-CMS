@@ -22,6 +22,7 @@ export const ASSIGNMENT_SELECT = Object.freeze({
   status: true,
   leaseStartDate: true,
   leaseEndDate: true,
+  plannedExitDate: true,
   actualExitDate: true,
   createdAt: true,
   updatedAt: true,
@@ -61,6 +62,9 @@ export function toPublicAssignment(assignment) {
     leaseStartDate: toCalendarDate(assignment.leaseStartDate),
     leaseEndDate: assignment.leaseEndDate
       ? toCalendarDate(assignment.leaseEndDate)
+      : null,
+    plannedExitDate: assignment.plannedExitDate
+      ? toCalendarDate(assignment.plannedExitDate)
       : null,
     actualExitDate: assignment.actualExitDate
       ? assignment.actualExitDate.toISOString()

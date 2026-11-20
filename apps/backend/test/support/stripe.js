@@ -15,6 +15,7 @@ const GATEWAY_METHODS = Object.freeze([
   "expireCheckoutSession",
   "createPortalSession",
   "retrieveSubscription",
+  "updateCustomerEmail",
 ]);
 
 const SECONDS_PER_DAY = 24 * 60 * 60;
@@ -91,6 +92,10 @@ export function recordingStripeGateway({ subscriptions = new Map(), sessions = n
       }
 
       return subscription;
+    },
+    async updateCustomerEmail(params) {
+      record("updateCustomerEmail", [params]);
+      return { id: params.customerId, email: params.email };
     },
     ...overrides,
   };

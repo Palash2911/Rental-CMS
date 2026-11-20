@@ -56,6 +56,10 @@ export function createStripeGateway(stripe) {
     retrieveSubscription(id) {
       return stripe.subscriptions.retrieve(id);
     },
+
+    updateCustomerEmail({ customerId, email }) {
+      return stripe.customers.update(customerId, { email });
+    },
   });
 }
 

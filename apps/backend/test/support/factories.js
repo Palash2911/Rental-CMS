@@ -6,6 +6,7 @@ import {
   HouseStatus,
   InvitationStatus,
   IssueStatus,
+  LeaveRequestStatus,
   OwnerAccountStatus,
   OwnerMemberRole,
   TenantAssignmentStatus,
@@ -37,8 +38,28 @@ export function createUser({ email = uniqueEmail(), name = "Test User", isBlocke
   });
 }
 
+const LOG_LEVELS = Object.freeze(["trace", "debug", "info", "warn", "error"]);
+
 /**
- * Builds a request context for a token, the way createContext would after verifying it.
+ * A stand-in for Yoga's request-scoped logger (`context.log`): silent, and records each call
+ * as `{ level, args }` in `entries` so tests can assert on it.
+ */
+export function recordingLogger() {
+  const entries = [];
+  const logger = { entries };
+
+  for (const level of LOG_LEVELS) {
+    logger[level] = (...args) => {
+      entries.push({ level, args });
+    };
+  }
+
+  return logger;
+}
+
+/**
+ * Builds a request context for a token, the way createContext would after verifying it, plus
+ * the `log` Yoga adds to every request's context.
  * Each call returns a new object, so the per-request user cache never leaks between calls.
  */
 export function tokenContext({
@@ -49,8 +70,10 @@ export function tokenContext({
   superAdmin = false,
   liveSuperAdmin = superAdmin,
   billingGateway = unexpectedStripeGateway(),
+  log = recordingLogger(),
 }) {
   return {
+    log,
     prisma,
     userId,
     email,
@@ -142,7 +165,11 @@ export function createHouse(
  * Gives `tenant` an assignment on `house` directly (test setup only; the API creates
  * assignments through acceptInvitation). Sets the house OCCUPIED for an active assignment.
  */
-export async function createAssignment(house, tenant, { status = TenantAssignmentStatus.ACTIVE } = {}) {
+export async function createAssignment(
+  house,
+  tenant,
+  { status = TenantAssignmentStatus.ACTIVE, plannedExitDate = null } = {},
+) {
   const profile = await prisma.tenantProfile.upsert({
     where: { userId: tenant.id },
     create: { userId: tenant.id },
@@ -155,6 +182,7 @@ export async function createAssignment(house, tenant, { status = TenantAssignmen
       houseId: house.id,
       status,
       leaseStartDate: DEFAULT_LEASE_START,
+      plannedExitDate,
     },
   });
 
@@ -252,6 +280,35 @@ export function createIssue(
       title,
       description,
       status,
+      ...(createdAt ? { createdAt } : {}),
+    },
+  });
+}
+
+/**
+ * Inserts a leave request on an assignment directly (test setup only), with houseId copied
+ * from it. Pass `createdAt` to fix the paging order.
+ */
+export function createLeaveRequest(
+  assignment,
+  {
+    status = LeaveRequestStatus.PENDING,
+    requestedExitDate = new Date("2027-06-30T00:00:00.000Z"),
+    reason = null,
+    respondedAt = null,
+    respondedByUserId = null,
+    createdAt,
+  } = {},
+) {
+  return prisma.leaveRequest.create({
+    data: {
+      tenantAssignmentId: assignment.id,
+      houseId: assignment.houseId,
+      status,
+      requestedExitDate,
+      reason,
+      respondedAt,
+      respondedByUserId,
       ...(createdAt ? { createdAt } : {}),
     },
   });

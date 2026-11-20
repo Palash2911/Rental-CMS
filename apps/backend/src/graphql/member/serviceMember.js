@@ -164,8 +164,9 @@ export function listMyMemberInvitations(context, { actorEmail, first, after }) {
  * Locks the owner account, then re-checks under the lock what the guard checked before it:
  * a status that allows member writes and billing that is not read-only. A block, deletion
  * schedule or webhook that committed after the guard is therefore always seen.
+ * `allowReadOnly` skips the billing check, matching the guard option of the same name.
  */
-async function lockWritableAccount(tx, ownerAccountId) {
+async function lockWritableAccount(tx, ownerAccountId, { allowReadOnly = false } = {}) {
   const account = await lockOwnerAccount(tx, ownerAccountId);
 
   if (!account) {
@@ -174,6 +175,10 @@ async function lockWritableAccount(tx, ownerAccountId) {
 
   if (!ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE.includes(account.status)) {
     throw new ForbiddenError(MESSAGES.STATUS_NOT_ALLOWED);
+  }
+
+  if (allowReadOnly) {
+    return;
   }
 
   const subscription = await tx.subscription.findUnique({
@@ -527,13 +532,13 @@ export function removeMember(context, { actorId, ownerAccountId, userId }) {
 }
 
 /**
- * Removes the actor's own CO_OWNER membership. Returns it. Throws ForbiddenError for the
- * PRIMARY member or an account that does not allow member writes, and NotFoundError when the
- * actor is no longer a member.
+ * Removes the actor's own CO_OWNER membership. Returns it. Allowed while billing makes the
+ * account read-only. Throws ForbiddenError for the PRIMARY member or an account status that
+ * does not allow member writes, and NotFoundError when the actor is no longer a member.
  */
 export function leaveAccount(context, { actorId, ownerAccountId }) {
   return context.prisma.$transaction(async (tx) => {
-    await lockWritableAccount(tx, ownerAccountId);
+    await lockWritableAccount(tx, ownerAccountId, { allowReadOnly: true });
 
     const member = await findMembership(tx, ownerAccountId, actorId);
 
@@ -586,14 +591,97 @@ async function swapRoles(tx, { previous, next }) {
   }
 }
 
+function findCustomerEmailTarget(prisma, ownerAccountId) {
+  return Promise.all([
+    prisma.subscription.findUnique({
+      where: { ownerAccountId },
+      select: { stripeCustomerId: true },
+    }),
+    prisma.ownerAccountMember.findFirst({
+      where: { ownerAccountId, role: OwnerMemberRole.PRIMARY },
+      select: { userId: true, user: { select: { email: true } } },
+    }),
+  ]);
+}
+
+/**
+ * Points the account's Stripe customer at the current PRIMARY's email. Runs after the
+ * transfer commits, so no row lock is held during the network call, and it reads the
+ * PRIMARY afresh so a later transfer's sync can never be overwritten by this one's stale
+ * email. A Stripe failure never undoes the transfer: it is recorded as
+ * CUSTOMER_EMAIL_SYNC_FAILED on the Subscription for a later retry.
+ */
+async function syncCustomerEmail(context, { ownerAccountId, actorId }) {
+  const [subscription, primary] = await findCustomerEmailTarget(context.prisma, ownerAccountId);
+
+  if (!subscription?.stripeCustomerId || !primary) {
+    return;
+  }
+
+  try {
+    await context.billingGateway.updateCustomerEmail({
+      customerId: subscription.stripeCustomerId,
+      email: primary.user.email,
+    });
+  } catch (error) {
+    await recordCustomerEmailSyncFailure(context, {
+      ownerAccountId,
+      actorId,
+      stripeCustomerId: subscription.stripeCustomerId,
+      primaryUserId: primary.userId,
+      errorType: typeof error?.type === "string" ? error.type : null,
+    });
+  }
+}
+
+// The transfer has already committed, so a failure here must not fail the request (project
+// owner). The server log is then the only record; it names ids, never the email.
+async function recordCustomerEmailSyncFailure(context, { actorId, ...metadata }) {
+  try {
+    await context.prisma.$transaction((tx) =>
+      logActivity(tx, {
+        entityType: ENTITY_TYPES.SUBSCRIPTION,
+        entityId: metadata.ownerAccountId,
+        action: ACTIVITY_ACTIONS.CUSTOMER_EMAIL_SYNC_FAILED,
+        performedByUserId: actorId,
+        metadata,
+      }),
+    );
+  } catch (error) {
+    // context.log is Yoga's request-scoped logger (graphql-yoga 6 puts it on the server
+    // context; createContext's fields are merged onto it).
+    context.log.error(
+      {
+        err: error,
+        ownerAccountId: metadata.ownerAccountId,
+        primaryUserId: metadata.primaryUserId,
+      },
+      "Could not record CUSTOMER_EMAIL_SYNC_FAILED after an ownership transfer.",
+    );
+  }
+}
+
 /**
  * Makes an existing CO_OWNER the PRIMARY member and the actor a CO_OWNER, in one transaction
  * under the OwnerAccount lock, then the new PRIMARY's User lock for the primary-account cap.
+ * After the commit, updates the Stripe customer's email (see syncCustomerEmail).
  * Throws ForbiddenError when the actor is no longer PRIMARY or the account does not allow
  * member writes, NotFoundError when the target is not a member, and ConflictError for a
  * transfer to oneself or a target at MAX_PRIMARY_ACCOUNTS.
  */
-export function transferOwnership(context, { actorId, ownerAccountId, newPrimaryUserId }) {
+export async function transferOwnership(context, { actorId, ownerAccountId, newPrimaryUserId }) {
+  const transfer = await commitOwnershipTransfer(context, {
+    actorId,
+    ownerAccountId,
+    newPrimaryUserId,
+  });
+
+  await syncCustomerEmail(context, { ownerAccountId, actorId });
+
+  return transfer;
+}
+
+function commitOwnershipTransfer(context, { actorId, ownerAccountId, newPrimaryUserId }) {
   return context.prisma.$transaction(async (tx) => {
     await lockWritableAccount(tx, ownerAccountId);
     const previous = await assertStillPrimary(tx, ownerAccountId, actorId);

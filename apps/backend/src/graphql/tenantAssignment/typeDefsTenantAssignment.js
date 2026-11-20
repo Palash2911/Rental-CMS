@@ -6,6 +6,7 @@ export const tenantAssignmentTypeDefs = `
     status: TenantAssignmentStatus!
     leaseStartDate: Date!
     leaseEndDate: Date
+    plannedExitDate: Date
     actualExitDate: DateTime
     createdAt: DateTime!
     updatedAt: DateTime!

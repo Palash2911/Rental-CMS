@@ -9,6 +9,8 @@ import { invitationResolvers } from "./invitation/resolversInvitation.js";
 import { invitationTypeDefs } from "./invitation/typeDefsInvitation.js";
 import { issueResolvers } from "./issues/resolversIssues.js";
 import { issueTypeDefs } from "./issues/typeDefsIssues.js";
+import { leaveRequestResolvers } from "./leaveRequest/resolversLeaveRequest.js";
+import { leaveRequestTypeDefs } from "./leaveRequest/typeDefsLeaveRequest.js";
 import { memberResolvers } from "./member/resolversMember.js";
 import { memberTypeDefs } from "./member/typeDefsMember.js";
 import { ownerAccountResolvers } from "./ownerAccount/resolversOwnerAccount.js";
@@ -46,6 +48,7 @@ export const schema = createSchema({
     issueTypeDefs,
     billingTypeDefs,
     memberTypeDefs,
+    leaveRequestTypeDefs,
   ],
   resolvers: [
     scalarResolvers,
@@ -59,5 +62,6 @@ export const schema = createSchema({
     issueResolvers,
     billingResolvers,
     memberResolvers,
+    leaveRequestResolvers,
   ],
 });

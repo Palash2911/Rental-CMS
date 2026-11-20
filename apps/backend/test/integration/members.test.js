@@ -10,9 +10,12 @@ import {
   createMemberInvitation,
   createOwnerAccount,
   createUser,
+  recordingLogger,
+  setBilling,
   uniqueEmail,
 } from "../support/factories.js";
 import { expectData, expectError, run } from "../support/graphql.js";
+import { recordingStripeGateway } from "../support/stripe.js";
 
 const MEMBER_FIELDS = "id userId name email role joinedAt";
 const INVITATION_FIELDS = "id ownerAccountId ownerAccountName email status expired expiresAt respondedAt createdAt updatedAt";
@@ -58,6 +61,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MISSING_ID = "cjld2cjxh0000qzrmn831i7rn";
 const CANCELED = Object.freeze({ plan: "STARTER", interval: "MONTH", stripeStatus: "canceled" });
 const PAST = () => new Date(Date.now() - 60 * 1000);
+const STRIPE_CUSTOMER_ID = "cus_test_transfer";
 
 function as(user) {
   return contextFor(user);
@@ -542,10 +546,22 @@ describe("leaveAccount", () => {
     expectError(await run(as(await createUser()), LEAVE, { ownerAccountId: account.id }), "NOT_FOUND", MESSAGES.OWNER_ACCOUNT_NOT_FOUND);
   });
 
-  it("refuses on a read-only account", async () => {
+  it("is allowed on a read-only account, like scheduling the account's deletion", async () => {
     const { coOwner, account } = await teamFixture({ billing: CANCELED });
 
-    expectError(await run(as(coOwner), LEAVE, { ownerAccountId: account.id }), "FORBIDDEN", READ_ONLY_MESSAGE);
+    const data = expectData(await run(as(coOwner), LEAVE, { ownerAccountId: account.id }));
+
+    assert.equal(data.leaveAccount.userId, coOwner.id);
+    assert.equal(await membershipOf(account, coOwner), null);
+  });
+
+  it("refuses on a BLOCKED or PENDING_DELETION account", async () => {
+    for (const status of ["BLOCKED", "PENDING_DELETION"]) {
+      const { coOwner, account } = await teamFixture({ status });
+
+      expectError(await run(as(coOwner), LEAVE, { ownerAccountId: account.id }), "FORBIDDEN", MESSAGES.STATUS_NOT_ALLOWED);
+      assert.ok(await membershipOf(account, coOwner));
+    }
   });
 });
 
@@ -569,6 +585,132 @@ describe("transferOwnership", () => {
     expectError(await run(as(coOwner), PORTAL, { ownerAccountId: account.id }), "CONFLICT", MESSAGES.NO_CUSTOMER);
     expectError(await run(as(owner), INVITE, { ownerAccountId: account.id, email: uniqueEmail() }), "FORBIDDEN", MESSAGES.ROLE_NOT_ALLOWED);
     expectData(await run(as(owner), LEAVE, { ownerAccountId: account.id }));
+  });
+
+  it("updates the Stripe customer's email to the new PRIMARY's email", async () => {
+    const { owner, coOwner, account } = await teamFixture();
+    await setBilling(account, { stripeCustomerId: STRIPE_CUSTOMER_ID });
+    const stripe = recordingStripeGateway();
+
+    expectData(
+      await run(contextFor(owner, { billingGateway: stripe.gateway }), TRANSFER, {
+        ownerAccountId: account.id,
+        newPrimaryUserId: coOwner.id,
+      }),
+    );
+
+    assert.deepEqual(stripe.calls, [
+      { name: "updateCustomerEmail", args: [{ customerId: STRIPE_CUSTOMER_ID, email: coOwner.email }] },
+    ]);
+    const failures = await prisma.activityLog.count({ where: { action: "CUSTOMER_EMAIL_SYNC_FAILED" } });
+    assert.equal(failures, 0);
+  });
+
+  it("still transfers when the Stripe update fails, and logs the failure for a retry", async () => {
+    const { owner, coOwner, account } = await teamFixture();
+    await setBilling(account, { stripeCustomerId: STRIPE_CUSTOMER_ID });
+    const stripe = recordingStripeGateway({
+      overrides: {
+        async updateCustomerEmail() {
+          throw Object.assign(new Error("Stripe is unavailable"), { type: "StripeConnectionError" });
+        },
+      },
+    });
+
+    const data = expectData(
+      await run(contextFor(owner, { billingGateway: stripe.gateway }), TRANSFER, {
+        ownerAccountId: account.id,
+        newPrimaryUserId: coOwner.id,
+      }),
+    );
+
+    assert.equal(data.transferOwnership.newPrimary.userId, coOwner.id);
+    assert.equal((await membershipOf(account, coOwner)).role, "PRIMARY");
+
+    const [log] = await prisma.activityLog.findMany({ where: { action: "CUSTOMER_EMAIL_SYNC_FAILED" } });
+    assert.deepEqual([log.entityType, log.entityId, log.performedByUserId], ["Subscription", account.id, owner.id]);
+    assert.deepEqual(log.metadata, {
+      ownerAccountId: account.id,
+      stripeCustomerId: STRIPE_CUSTOMER_ID,
+      primaryUserId: coOwner.id,
+      errorType: "StripeConnectionError",
+    });
+  });
+
+  it("still succeeds when the failure log cannot be written, and reports it to the request logger", async () => {
+    const { owner, coOwner, account } = await teamFixture();
+    await setBilling(account, { stripeCustomerId: STRIPE_CUSTOMER_ID });
+    const stripe = recordingStripeGateway({
+      overrides: {
+        async updateCustomerEmail() {
+          throw new Error("Stripe is unavailable");
+        },
+      },
+    });
+    const logWriteError = new Error("Database unavailable");
+    let transactions = 0;
+    // The transfer's own transaction runs normally; the failure log's transaction fails.
+    const failingLogPrisma = new Proxy(prisma, {
+      get(target, property) {
+        if (property !== "$transaction") {
+          return Reflect.get(target, property);
+        }
+
+        return (...args) => {
+          transactions += 1;
+          return transactions === 1 ? target.$transaction(...args) : Promise.reject(logWriteError);
+        };
+      },
+    });
+    const log = recordingLogger();
+
+    const data = expectData(
+      await run({ ...contextFor(owner, { billingGateway: stripe.gateway, log }), prisma: failingLogPrisma }, TRANSFER, {
+        ownerAccountId: account.id,
+        newPrimaryUserId: coOwner.id,
+      }),
+    );
+
+    assert.equal(data.transferOwnership.newPrimary.userId, coOwner.id);
+    assert.equal((await membershipOf(account, coOwner)).role, "PRIMARY");
+    assert.equal(await prisma.activityLog.count({ where: { action: "CUSTOMER_EMAIL_SYNC_FAILED" } }), 0);
+
+    assert.equal(log.entries.length, 1);
+    const [{ level, args }] = log.entries;
+    const [attributes, message] = args;
+    assert.equal(level, "error");
+    assert.deepEqual(attributes, { err: logWriteError, ownerAccountId: account.id, primaryUserId: coOwner.id });
+    assert.equal(message, "Could not record CUSTOMER_EMAIL_SYNC_FAILED after an ownership transfer.");
+  });
+
+  it("makes no Stripe call for an account without a Stripe customer", async () => {
+    const { owner, coOwner, account } = await teamFixture();
+    const stripe = recordingStripeGateway();
+
+    expectData(
+      await run(contextFor(owner, { billingGateway: stripe.gateway }), TRANSFER, {
+        ownerAccountId: account.id,
+        newPrimaryUserId: coOwner.id,
+      }),
+    );
+
+    assert.deepEqual(stripe.calls, []);
+  });
+
+  it("makes no Stripe call when the transfer is refused", async () => {
+    const { owner, account } = await teamFixture();
+    await setBilling(account, { stripeCustomerId: STRIPE_CUSTOMER_ID });
+    const stripe = recordingStripeGateway();
+
+    expectError(
+      await run(contextFor(owner, { billingGateway: stripe.gateway }), TRANSFER, {
+        ownerAccountId: account.id,
+        newPrimaryUserId: owner.id,
+      }),
+      "CONFLICT",
+      MESSAGES.ALREADY_PRIMARY,
+    );
+    assert.deepEqual(stripe.calls, []);
   });
 
   it("requires the target to be a member and not the caller", async () => {

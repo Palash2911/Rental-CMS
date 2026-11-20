@@ -1,0 +1,380 @@
+import {
+  LeaveRequestStatus,
+  TenantAssignmentStatus,
+} from "../../generated/prisma/enums.ts";
+import {
+  ACTIVITY_ACTIONS,
+  ENTITY_TYPES,
+  logActivity,
+} from "../../lib/activity.js";
+import { ConflictError, isRecordNotFound, isUniqueViolation } from "../../lib/errors.js";
+import { buildPageQuery, toPage } from "../../lib/pagination.js";
+import { lockHouse } from "../house/serviceHouse.js";
+import {
+  ASSIGNMENT_SELECT,
+  toCalendarDate,
+  toPublicAssignment,
+} from "../tenantAssignment/serviceTenantAssignment.js";
+
+const { PENDING, APPROVED, REJECTED, WITHDRAWN } = LeaveRequestStatus;
+const { ACTIVE, NOTICE_PERIOD } = TenantAssignmentStatus;
+
+const NOTICE_WITHDRAWN_REASON = "NOTICE_WITHDRAWN";
+
+const LEAVE_REQUEST_SELECT = Object.freeze({
+  id: true,
+  tenantAssignmentId: true,
+  houseId: true,
+  status: true,
+  requestedExitDate: true,
+  reason: true,
+  respondedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+const MESSAGES = Object.freeze({
+  REQUEST_NEEDS_ACTIVE: "A leave request can only be made on an active tenant assignment.",
+  ALREADY_PENDING: "This tenant assignment already has a pending leave request.",
+  NOT_PENDING: "This leave request is no longer pending.",
+  NOTICE_NEEDS_ACTIVE: "Only an active tenant assignment can be given notice.",
+  NOT_IN_NOTICE: "Only a tenant assignment in its notice period can have its notice withdrawn.",
+});
+
+/** Converts a LeaveRequest row to the client shape. */
+export function toPublicLeaveRequest(request) {
+  return {
+    id: request.id,
+    tenantAssignmentId: request.tenantAssignmentId,
+    houseId: request.houseId,
+    status: request.status,
+    requestedExitDate: toCalendarDate(request.requestedExitDate),
+    reason: request.reason,
+    respondedAt: request.respondedAt ? request.respondedAt.toISOString() : null,
+    createdAt: request.createdAt.toISOString(),
+    updatedAt: request.updatedAt.toISOString(),
+  };
+}
+
+async function listPage(prisma, filter, { status, first, after }) {
+  const page = buildPageQuery({ first, after });
+  const statusFilter = status ? { status } : {};
+
+  const rows = await prisma.leaveRequest.findMany({
+    where: { AND: [filter, statusFilter, page.where] },
+    orderBy: page.orderBy,
+    take: page.take,
+    select: LEAVE_REQUEST_SELECT,
+  });
+
+  return toPage(rows, first, toPublicLeaveRequest);
+}
+
+/** Lists an assignment's leave requests, optionally filtered by status, newest first. */
+export function listLeaveRequestsByAssignment(context, { tenantAssignmentId, ...options }) {
+  return listPage(context.prisma, { tenantAssignmentId }, options);
+}
+
+/** Lists the leave requests on every assignment of a house, optionally filtered by status, newest first. */
+export function listLeaveRequestsByHouse(context, { houseId, ...options }) {
+  return listPage(context.prisma, { houseId }, options);
+}
+
+async function assertActiveAssignment(tx, tenantAssignmentId) {
+  const assignment = await tx.tenantAssignment.findUnique({
+    where: { id: tenantAssignmentId },
+    select: { status: true },
+  });
+
+  if (assignment?.status !== ACTIVE) {
+    throw new ConflictError(MESSAGES.REQUEST_NEEDS_ACTIVE);
+  }
+}
+
+async function assertNoPendingRequest(tx, tenantAssignmentId) {
+  const pending = await tx.leaveRequest.findFirst({
+    where: { tenantAssignmentId, status: PENDING },
+    select: { id: true },
+  });
+
+  if (pending) {
+    throw new ConflictError(MESSAGES.ALREADY_PENDING);
+  }
+}
+
+async function insertLeaveRequest(tx, data) {
+  try {
+    return await tx.leaveRequest.create({ data, select: LEAVE_REQUEST_SELECT });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ConflictError(MESSAGES.ALREADY_PENDING);
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Creates a PENDING leave request on an ACTIVE assignment, under the house row lock.
+ * Throws ConflictError when the assignment is not ACTIVE or already has a pending request.
+ */
+export function createLeaveRequest(
+  context,
+  { actorId, tenantAssignmentId, houseId, requestedExitDate, reason },
+) {
+  return context.prisma.$transaction(async (tx) => {
+    await lockHouse(tx, houseId);
+    await assertActiveAssignment(tx, tenantAssignmentId);
+    await assertNoPendingRequest(tx, tenantAssignmentId);
+
+    const request = await insertLeaveRequest(tx, {
+      tenantAssignmentId,
+      houseId,
+      requestedExitDate,
+      reason: reason ?? null,
+      status: PENDING,
+    });
+
+    await logActivity(tx, {
+      entityType: ENTITY_TYPES.LEAVE_REQUEST,
+      entityId: request.id,
+      action: ACTIVITY_ACTIONS.CREATED,
+      performedByUserId: actorId,
+      metadata: {
+        tenantAssignmentId,
+        requestedExitDate: toCalendarDate(request.requestedExitDate),
+      },
+    });
+
+    return toPublicLeaveRequest(request);
+  });
+}
+
+// Compare-and-set: a concurrent response matches no row (P2025).
+async function respond(tx, { id, actorId, toStatus, now }) {
+  try {
+    return await tx.leaveRequest.update({
+      where: { id, status: PENDING },
+      data: { status: toStatus, respondedAt: now, respondedByUserId: actorId },
+      select: LEAVE_REQUEST_SELECT,
+    });
+  } catch (error) {
+    if (isRecordNotFound(error)) {
+      throw new ConflictError(MESSAGES.NOT_PENDING);
+    }
+
+    throw error;
+  }
+}
+
+function logResponse(tx, { request, action, actorId }) {
+  return logActivity(tx, {
+    entityType: ENTITY_TYPES.LEAVE_REQUEST,
+    entityId: request.id,
+    action,
+    performedByUserId: actorId,
+    metadata: {
+      tenantAssignmentId: request.tenantAssignmentId,
+      fromStatus: PENDING,
+      toStatus: request.status,
+    },
+  });
+}
+
+function respondUnderHouseLock(context, { id, houseId, actorId, toStatus, action }) {
+  return context.prisma.$transaction(async (tx) => {
+    await lockHouse(tx, houseId);
+
+    const request = await respond(tx, { id, actorId, toStatus, now: new Date() });
+    await logResponse(tx, { request, action, actorId });
+
+    return toPublicLeaveRequest(request);
+  });
+}
+
+/**
+ * Moves the tenant's PENDING leave request to WITHDRAWN, under the house row lock.
+ * Throws ConflictError when it is no longer pending.
+ */
+export function withdrawLeaveRequest(context, { actorId, id, houseId }) {
+  return respondUnderHouseLock(context, {
+    id,
+    houseId,
+    actorId,
+    toStatus: WITHDRAWN,
+    action: ACTIVITY_ACTIONS.WITHDRAWN,
+  });
+}
+
+/**
+ * Moves a PENDING leave request to REJECTED, under the house row lock. The assignment is not
+ * changed. Throws ConflictError when it is no longer pending.
+ */
+export function rejectLeaveRequest(context, { actorId, id, houseId }) {
+  return respondUnderHouseLock(context, {
+    id,
+    houseId,
+    actorId,
+    toStatus: REJECTED,
+    action: ACTIVITY_ACTIONS.REJECTED,
+  });
+}
+
+// Compare-and-set on the assignment status, so a concurrent exit or notice matches no row.
+async function moveAssignment(tx, { id, fromStatus, data, conflictMessage }) {
+  try {
+    return await tx.tenantAssignment.update({
+      where: { id, status: fromStatus },
+      data,
+      select: ASSIGNMENT_SELECT,
+    });
+  } catch (error) {
+    if (isRecordNotFound(error)) {
+      throw new ConflictError(conflictMessage);
+    }
+
+    throw error;
+  }
+}
+
+async function startNoticePeriod(tx, { tenantAssignmentId, plannedExitDate, actorId, leaveRequestId }) {
+  const assignment = await moveAssignment(tx, {
+    id: tenantAssignmentId,
+    fromStatus: ACTIVE,
+    data: { status: NOTICE_PERIOD, plannedExitDate },
+    conflictMessage: MESSAGES.NOTICE_NEEDS_ACTIVE,
+  });
+
+  await logActivity(tx, {
+    entityType: ENTITY_TYPES.TENANT_ASSIGNMENT,
+    entityId: tenantAssignmentId,
+    action: ACTIVITY_ACTIONS.NOTICE_GIVEN,
+    performedByUserId: actorId,
+    metadata: {
+      fromStatus: ACTIVE,
+      toStatus: NOTICE_PERIOD,
+      plannedExitDate: toCalendarDate(plannedExitDate),
+      leaveRequestId: leaveRequestId ?? null,
+    },
+  });
+
+  return assignment;
+}
+
+/**
+ * Approves a PENDING leave request and moves its ACTIVE assignment to NOTICE_PERIOD with
+ * plannedExitDate set to the requested date, in one transaction under the house row lock.
+ * Throws ConflictError when the request is no longer pending or the assignment is not ACTIVE.
+ */
+export function approveLeaveRequest(context, { actorId, id, houseId }) {
+  return context.prisma.$transaction(async (tx) => {
+    await lockHouse(tx, houseId);
+
+    const request = await respond(tx, { id, actorId, toStatus: APPROVED, now: new Date() });
+    await logResponse(tx, { request, action: ACTIVITY_ACTIONS.APPROVED, actorId });
+
+    await startNoticePeriod(tx, {
+      tenantAssignmentId: request.tenantAssignmentId,
+      plannedExitDate: request.requestedExitDate,
+      actorId,
+      leaveRequestId: request.id,
+    });
+
+    return toPublicLeaveRequest(request);
+  });
+}
+
+/**
+ * Moves an ACTIVE assignment to NOTICE_PERIOD with the owner's planned exit date, under the
+ * house row lock. Throws ConflictError when the assignment is not ACTIVE.
+ */
+export function giveNotice(context, { actorId, tenantAssignmentId, houseId, plannedExitDate }) {
+  return context.prisma.$transaction(async (tx) => {
+    await lockHouse(tx, houseId);
+
+    const assignment = await startNoticePeriod(tx, { tenantAssignmentId, plannedExitDate, actorId });
+
+    return toPublicAssignment(assignment);
+  });
+}
+
+async function withdrawApprovedRequests(tx, { tenantAssignmentId, actorId }) {
+  const approved = await tx.leaveRequest.findMany({
+    where: { tenantAssignmentId, status: APPROVED },
+    select: { id: true },
+  });
+  const ids = approved.map(({ id }) => id);
+
+  if (ids.length === 0) {
+    return ids;
+  }
+
+  await tx.leaveRequest.updateMany({
+    where: { id: { in: ids }, status: APPROVED },
+    data: { status: WITHDRAWN },
+  });
+
+  // Approval needs an ACTIVE assignment and moves it to NOTICE_PERIOD, and this is the only
+  // way back to ACTIVE, so an assignment has at most one APPROVED request at a time.
+  for (const id of ids) {
+    await logActivity(tx, {
+      entityType: ENTITY_TYPES.LEAVE_REQUEST,
+      entityId: id,
+      action: ACTIVITY_ACTIONS.WITHDRAWN,
+      performedByUserId: actorId,
+      metadata: {
+        tenantAssignmentId,
+        fromStatus: APPROVED,
+        toStatus: WITHDRAWN,
+        reason: NOTICE_WITHDRAWN_REASON,
+      },
+    });
+  }
+
+  return ids;
+}
+
+/**
+ * Moves a NOTICE_PERIOD assignment back to ACTIVE, clears plannedExitDate and marks any
+ * APPROVED leave request on it WITHDRAWN, in one transaction under the house row lock.
+ * Throws ConflictError when the assignment is not in its notice period.
+ */
+export function withdrawNotice(context, { actorId, tenantAssignmentId, houseId }) {
+  return context.prisma.$transaction(async (tx) => {
+    await lockHouse(tx, houseId);
+
+    const previous = await tx.tenantAssignment.findUnique({
+      where: { id: tenantAssignmentId },
+      select: { plannedExitDate: true },
+    });
+
+    const assignment = await moveAssignment(tx, {
+      id: tenantAssignmentId,
+      fromStatus: NOTICE_PERIOD,
+      data: { status: ACTIVE, plannedExitDate: null },
+      conflictMessage: MESSAGES.NOT_IN_NOTICE,
+    });
+
+    const withdrawnLeaveRequestIds = await withdrawApprovedRequests(tx, {
+      tenantAssignmentId,
+      actorId,
+    });
+
+    await logActivity(tx, {
+      entityType: ENTITY_TYPES.TENANT_ASSIGNMENT,
+      entityId: tenantAssignmentId,
+      action: ACTIVITY_ACTIONS.NOTICE_WITHDRAWN,
+      performedByUserId: actorId,
+      metadata: {
+        fromStatus: NOTICE_PERIOD,
+        toStatus: ACTIVE,
+        previousPlannedExitDate: previous?.plannedExitDate
+          ? toCalendarDate(previous.plannedExitDate)
+          : null,
+        withdrawnLeaveRequestIds,
+      },
+    });
+
+    return toPublicAssignment(assignment);
+  });
+}
