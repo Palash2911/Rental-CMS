@@ -1,4 +1,5 @@
 import {
+  DeletionReason,
   OwnerAccountStatus,
   OwnerMemberRole,
 } from "../../generated/prisma/enums.ts";
@@ -18,7 +19,7 @@ import { syncReadOnlySince } from "../billing/subscriptionStore.js";
 const { APPROVED, PENDING, BLOCKED, PENDING_DELETION } = OwnerAccountStatus;
 
 export const MAX_PRIMARY_ACCOUNTS = 5;
-const DELETION_GRACE_DAYS = 30;
+export const DELETION_GRACE_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const OWNER_ACCOUNT_SELECT = Object.freeze({
@@ -40,12 +41,13 @@ function deletionDate() {
   return new Date(Date.now() + DELETION_GRACE_DAYS * MS_PER_DAY);
 }
 
-function scheduleDeletionData(current) {
-  return {
+function scheduleDeletionData(deletionReason) {
+  return (current) => ({
     status: PENDING_DELETION,
     statusBeforeDeletion: current.status,
     deletionScheduledAt: deletionDate(),
-  };
+    deletionReason,
+  });
 }
 
 // Accounts scheduled before statusBeforeDeletion existed have no stored status;
@@ -55,6 +57,7 @@ function cancelDeletionData(current) {
     status: current.statusBeforeDeletion ?? PENDING,
     statusBeforeDeletion: null,
     deletionScheduledAt: null,
+    deletionReason: null,
   };
 }
 
@@ -76,12 +79,12 @@ const TRANSITIONS = Object.freeze({
   },
   OWNER_SCHEDULE_DELETION: {
     from: [PENDING, APPROVED],
-    data: scheduleDeletionData,
+    data: scheduleDeletionData(DeletionReason.OWNER_REQUEST),
     action: ACTIVITY_ACTIONS.DELETION_SCHEDULED,
   },
   ADMIN_SCHEDULE_DELETION: {
     from: [PENDING, APPROVED, BLOCKED],
-    data: scheduleDeletionData,
+    data: scheduleDeletionData(DeletionReason.ADMIN_REQUEST),
     action: ACTIVITY_ACTIONS.DELETION_SCHEDULED,
   },
   CANCEL_DELETION: {
@@ -213,14 +216,16 @@ function applyTransition(context, transition, { actorId, id, metadata = {} }) {
   return context.prisma.$transaction(async (tx) => {
     const current = await tx.ownerAccount.findUnique({
       where: { id },
-      select: { status: true, statusBeforeDeletion: true },
+      select: { status: true, statusBeforeDeletion: true, deletionExecutedAt: true },
     });
 
     if (!current) {
       throw new NotFoundError(MESSAGES.NOT_FOUND);
     }
 
-    if (!transition.from.includes(current.status)) {
+    // A tombstone left by the accountDeletion job has no data to return to, so no
+    // transition (in particular cancelling the deletion) may revive it.
+    if (current.deletionExecutedAt || !transition.from.includes(current.status)) {
       throw new ConflictError(MESSAGES.INVALID_TRANSITION);
     }
 

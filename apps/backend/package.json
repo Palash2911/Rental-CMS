@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "node --watch --env-file-if-exists=.env src/index.js",
     "start": "node --env-file-if-exists=.env src/index.js",
+    "worker": "node --env-file-if-exists=.env src/worker.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
@@ -24,6 +25,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
+    "bullmq": "6.7.8",
     "dotenv": "^17.4.2",
     "firebase-admin": "^14.5.0",
     "graphql": "^17.0.2",

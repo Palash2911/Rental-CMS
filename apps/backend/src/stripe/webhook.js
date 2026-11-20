@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 
+import { DeletionReason, OwnerAccountStatus } from "../generated/prisma/enums.ts";
 import {
   applyStripeSubscription,
   approveAfterCheckout,
@@ -21,6 +22,8 @@ export const STRIPE_WEBHOOK_PATH = "/webhooks/stripe";
 const MAX_BODY_BYTES = 1024 * 1024;
 const SIGNATURE_HEADER = "stripe-signature";
 const SUBSCRIPTION_MODE = "subscription";
+const RESUMED_STRIPE_STATUSES = Object.freeze(["active", "trialing"]);
+const SUBSCRIPTION_RESUMED_REASON = "SUBSCRIPTION_RESUMED";
 
 const HTTP = Object.freeze({
   OK: 200,
@@ -136,10 +139,74 @@ function planEvent(dependencies, event) {
   }
 }
 
+// The accountDeletion job keeps a tombstone with deletionExecutedAt set. Stripe still sends
+// events for it (the cancellation it made, a late checkout), which must not recreate the
+// Subscription row, so they are recorded and ignored.
+async function isDeletedAccount(tx, ownerAccountId) {
+  const account = await tx.ownerAccount.findUnique({
+    where: { id: ownerAccountId },
+    select: { deletionExecutedAt: true },
+  });
+
+  return account?.deletionExecutedAt != null;
+}
+
+// Project owner: a deletion the billingGrace job scheduled is undone as soon as billing is
+// paid again (active or trialing; past_due is not enough). Deletions the owner or an admin
+// asked for are left alone, and so is a BLOCKED account. Runs under the OwnerAccount lock
+// applyPlan holds, so it serialises with the accountDeletion job, which re-checks the status
+// under the same lock. syncReadOnlySince, which runs after it, clears readOnlySince.
+async function cancelBillingDeletion(tx, { ownerAccountId, stripeStatus, eventId }) {
+  if (!RESUMED_STRIPE_STATUSES.includes(stripeStatus)) {
+    return false;
+  }
+
+  const account = await tx.ownerAccount.findUnique({
+    where: { id: ownerAccountId },
+    select: { status: true, statusBeforeDeletion: true, deletionReason: true },
+  });
+
+  if (
+    account?.status !== OwnerAccountStatus.PENDING_DELETION ||
+    account.deletionReason !== DeletionReason.BILLING_GRACE
+  ) {
+    return false;
+  }
+
+  const restored = account.statusBeforeDeletion ?? OwnerAccountStatus.PENDING;
+
+  await tx.ownerAccount.update({
+    where: { id: ownerAccountId, status: OwnerAccountStatus.PENDING_DELETION },
+    data: {
+      status: restored,
+      statusBeforeDeletion: null,
+      deletionScheduledAt: null,
+      deletionReason: null,
+    },
+    select: { id: true },
+  });
+
+  await logActivity(tx, {
+    entityType: ENTITY_TYPES.OWNER_ACCOUNT,
+    entityId: ownerAccountId,
+    action: ACTIVITY_ACTIONS.DELETION_CANCELLED,
+    performedByUserId: null,
+    metadata: {
+      fromStatus: OwnerAccountStatus.PENDING_DELETION,
+      toStatus: restored,
+      reason: SUBSCRIPTION_RESUMED_REASON,
+      stripeStatus,
+      eventId,
+    },
+  });
+
+  return true;
+}
+
 async function applyPlan(tx, { event, plan, now }) {
   const account = await lockOwnerAccount(tx, plan.ownerAccountId);
 
-  if (!account) {
+  if (!account || (await isDeletedAccount(tx, plan.ownerAccountId))) {
     return false;
   }
 
@@ -179,6 +246,12 @@ async function applyPlan(tx, { event, plan, now }) {
           interval: applied.interval,
           approved,
         },
+      });
+
+      await cancelBillingDeletion(tx, {
+        ownerAccountId: plan.ownerAccountId,
+        stripeStatus: applied.stripeStatus,
+        eventId: event.id,
       });
     }
   }

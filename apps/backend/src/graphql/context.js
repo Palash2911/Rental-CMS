@@ -30,6 +30,7 @@ const BILLING_GATEWAY_METHODS = Object.freeze([
   "createPortalSession",
   "retrieveSubscription",
   "updateCustomerEmail",
+  "cancelSubscription",
 ]);
 
 // The commands the rate limit (createRedisClient's rateLimitHit) and the user cache use.

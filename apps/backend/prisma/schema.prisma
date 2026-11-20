@@ -17,6 +17,14 @@ enum OwnerAccountStatus {
   PENDING_DELETION
 }
 
+// Why an owner account is in PENDING_DELETION. Only BILLING_GRACE deletions are cancelled
+// automatically when billing comes back.
+enum DeletionReason {
+  OWNER_REQUEST
+  ADMIN_REQUEST
+  BILLING_GRACE
+}
+
 enum OwnerMemberRole {
   PRIMARY
   CO_OWNER
@@ -94,6 +102,9 @@ model OwnerAccount {
 
   deletionScheduledAt DateTime?
   deletionExecutedAt  DateTime?
+  // Set with deletionScheduledAt and cleared with it. Null for deletions scheduled before
+  // this column existed, which are never cancelled automatically.
+  deletionReason      DeletionReason?
 
   members           OwnerAccountMember[]
   memberInvitations MemberInvitation[]
@@ -196,6 +207,8 @@ model MemberInvitation {
   @@index([ownerAccountId, status, createdAt, id])
   @@index([email, createdAt, id], where: { status: "PENDING" })
   @@index([invitedByUserId])
+  // The cleanup job's scan for PENDING invitations long past expiry.
+  @@index([expiresAt], where: { status: "PENDING" })
 }
 
 model House {
@@ -289,6 +302,8 @@ model Invitation {
   @@index([houseId, status, createdAt, id])
   @@index([email, createdAt, id], where: { status: "PENDING" })
   @@index([invitedByUserId])
+  // The cleanup job's scan for PENDING invitations long past expiry.
+  @@index([expiresAt], where: { status: "PENDING" })
 }
 
 model Receipt {

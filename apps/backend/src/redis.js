@@ -55,6 +55,25 @@ export function createRedisClient(url, { onError } = {}) {
   return client;
 }
 
+/**
+ * Creates the Redis client for the BullMQ worker. Unlike the API client it waits and retries
+ * through outages (`maxRetriesPerRequest: null`, which BullMQ requires for its blocking
+ * connections), because a job is not a request and must not fail just because Redis blipped.
+ */
+export function createWorkerRedisClient(url, { onError } = {}) {
+  const client = new Redis(url, {
+    maxRetriesPerRequest: null,
+    connectTimeout: CONNECT_TIMEOUT_MS,
+    retryStrategy: reconnectDelay,
+  });
+
+  if (onError) {
+    client.on("error", onError);
+  }
+
+  return client;
+}
+
 /** Closes a client, waiting for pending replies when connected and dropping it otherwise. */
 export async function closeRedisClient(client) {
   try {

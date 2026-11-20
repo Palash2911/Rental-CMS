@@ -16,6 +16,7 @@ const GATEWAY_METHODS = Object.freeze([
   "createPortalSession",
   "retrieveSubscription",
   "updateCustomerEmail",
+  "cancelSubscription",
 ]);
 
 const SECONDS_PER_DAY = 24 * 60 * 60;
@@ -96,6 +97,16 @@ export function recordingStripeGateway({ subscriptions = new Map(), sessions = n
     async updateCustomerEmail(params) {
       record("updateCustomerEmail", [params]);
       return { id: params.customerId, email: params.email };
+    },
+    async cancelSubscription(id, options) {
+      record("cancelSubscription", [id, options]);
+      const subscription = subscriptions.get(id);
+
+      if (subscription) {
+        subscription.status = "canceled";
+      }
+
+      return { id, object: "subscription", status: "canceled" };
     },
     ...overrides,
   };

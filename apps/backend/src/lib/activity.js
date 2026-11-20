@@ -37,6 +37,7 @@ export const ACTIVITY_ACTIONS = Object.freeze({
   WITHDRAWN: "WITHDRAWN",
   NOTICE_GIVEN: "NOTICE_GIVEN",
   NOTICE_WITHDRAWN: "NOTICE_WITHDRAWN",
+  DELETION_EXECUTED: "DELETION_EXECUTED",
 });
 
 /** Writes an ActivityLog row. Call only with a transaction client, inside prisma.$transaction. */

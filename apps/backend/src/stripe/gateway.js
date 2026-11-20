@@ -60,6 +60,10 @@ export function createStripeGateway(stripe) {
     updateCustomerEmail({ customerId, email }) {
       return stripe.customers.update(customerId, { email });
     },
+
+    cancelSubscription(id, { idempotencyKey }) {
+      return stripe.subscriptions.cancel(id, undefined, { idempotencyKey });
+    },
   });
 }
 

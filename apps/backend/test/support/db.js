@@ -34,6 +34,28 @@ export async function resetDatabase() {
   await resetRedis();
 }
 
+/**
+ * The test Prisma client, except that the `$transaction` calls numbered in `failingCalls`
+ * (1-based, in call order) reject with `error` without running. For "one account fails,
+ * the rest continue" tests of the jobs.
+ */
+export function prismaFailingTransactions(failingCalls, error = new Error("Injected transaction failure")) {
+  let calls = 0;
+
+  return new Proxy(prisma, {
+    get(target, property) {
+      if (property !== "$transaction") {
+        return Reflect.get(target, property);
+      }
+
+      return (...args) => {
+        calls += 1;
+        return failingCalls.includes(calls) ? Promise.reject(error) : target.$transaction(...args);
+      };
+    },
+  });
+}
+
 after(() => prisma.$disconnect());
 
 export { prisma };
