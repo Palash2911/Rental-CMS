@@ -1,6 +1,12 @@
 import { ACCOUNT_DELETION_JOB, runAccountDeletion } from "./accountDeletion.js";
 import { BILLING_GRACE_JOB, runBillingGrace } from "./billingGrace.js";
 import { CLEANUP_JOB, runCleanup } from "./cleanup.js";
+import {
+  RECEIPT_UPLOAD_CLEANUP_JOB,
+  RECEIPT_UPLOAD_VERIFY_JOB,
+  runReceiptUploadCleanup,
+  runReceiptUploadVerify,
+} from "./receiptUploads.js";
 
 /** The one BullMQ queue the maintenance jobs share. */
 export const MAINTENANCE_QUEUE = "maintenance";
@@ -13,6 +19,9 @@ export const JOB_SCHEDULES = Object.freeze([
   Object.freeze({ name: BILLING_GRACE_JOB, pattern: "0 2 * * *" }),
   Object.freeze({ name: ACCOUNT_DELETION_JOB, pattern: "0 3 * * *" }),
   Object.freeze({ name: CLEANUP_JOB, pattern: "0 4 * * *" }),
+  Object.freeze({ name: RECEIPT_UPLOAD_CLEANUP_JOB, pattern: "0 5 * * *" }),
+  // The one hourly job: unattached receipt uploads are checked soon after their URL expires.
+  Object.freeze({ name: RECEIPT_UPLOAD_VERIFY_JOB, pattern: "15 * * * *" }),
 ]);
 
 // Every job is idempotent and runs again tomorrow, so a failed run is not retried in place.
@@ -26,6 +35,8 @@ const RUNNERS = Object.freeze({
   [BILLING_GRACE_JOB]: runBillingGrace,
   [ACCOUNT_DELETION_JOB]: runAccountDeletion,
   [CLEANUP_JOB]: runCleanup,
+  [RECEIPT_UPLOAD_CLEANUP_JOB]: runReceiptUploadCleanup,
+  [RECEIPT_UPLOAD_VERIFY_JOB]: runReceiptUploadVerify,
 });
 
 /**
@@ -53,7 +64,7 @@ export async function registerJobSchedulers(queue) {
 
 /**
  * Returns the BullMQ processor: runs the job service named by `job.name` with
- * `dependencies` (`{ prisma, billingGateway, log }`), logs and returns its summary.
+ * `dependencies` (`{ prisma, billingGateway, storageGateway, log }`), logs and returns its summary.
  * Throws for an unknown job name, which BullMQ records as a failed job.
  */
 export function createJobProcessor(dependencies) {

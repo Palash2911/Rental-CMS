@@ -37,18 +37,26 @@ const EXPECTED = JOB_SCHEDULES.map(({ name, pattern }) => ({ key: name, name, pa
 beforeEach(resetDatabase);
 
 describe("worker wiring", () => {
-  it("registers one daily UTC scheduler per job, idempotently", async () => {
+  it("registers one UTC scheduler per job, idempotently, with the receipt upload check hourly", async () => {
     await registerJobSchedulers(queue);
     await registerJobSchedulers(queue);
 
     const schedulers = await queue.getJobSchedulers();
 
     assert.deepEqual(schedulerSummary(schedulers), EXPECTED);
-    assert.deepEqual(EXPECTED.map(({ key }) => key), ["accountDeletion", "billingGrace", "cleanup"]);
+    assert.deepEqual(EXPECTED.map(({ key }) => key), [
+      "accountDeletion",
+      "billingGrace",
+      "cleanup",
+      "receiptUploadCleanup",
+      "receiptUploadVerify",
+    ]);
+    assert.equal(EXPECTED.find(({ key }) => key === "receiptUploadVerify").pattern, "15 * * * *");
+    assert.equal(EXPECTED.find(({ key }) => key === "receiptUploadCleanup").pattern, "0 5 * * *");
   });
 
   it("removes a scheduler that is no longer listed", async () => {
-    await queue.upsertJobScheduler("retiredJob", { pattern: "0 5 * * *", tz: "UTC" }, { name: "retiredJob" });
+    await queue.upsertJobScheduler("retiredJob", { pattern: "0 6 * * *", tz: "UTC" }, { name: "retiredJob" });
 
     await registerJobSchedulers(queue);
 

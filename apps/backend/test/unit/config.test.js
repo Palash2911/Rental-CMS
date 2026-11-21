@@ -16,6 +16,11 @@ function validEnv(overrides = {}) {
     STRIPE_CHECKOUT_CANCEL_URL: "http://localhost:3000/billing?checkout=cancel",
     STRIPE_PORTAL_RETURN_URL: "http://localhost:3000/billing",
     REDIS_URL: "redis://:SuperSecretPassword@127.0.0.1:6379/0",
+    S3_ENDPOINT: "https://account-id.r2.cloudflarestorage.com",
+    S3_REGION: "auto",
+    S3_ACCESS_KEY_ID: "SuperSecretAccessKeyId",
+    S3_SECRET_ACCESS_KEY: "SuperSecretAccessKey",
+    S3_BUCKET: "rental-cms-receipts",
     ...overrides,
   };
 }
@@ -159,5 +164,32 @@ describe("parseConfig", () => {
     assert.equal(parseConfig(validEnv({ TRUST_PROXY: "false" })).trustProxy, false);
     assert.equal(parseConfig(validEnv({ TRUST_PROXY: "true" })).trustProxy, true);
     assert.match(configError(validEnv({ TRUST_PROXY: "yes" })), /TRUST_PROXY must be "true" or "false"/);
+  });
+
+  it("requires all five S3 variables and exposes them as a frozen s3 group", () => {
+    const { s3 } = parseConfig(validEnv());
+
+    assert.equal(Object.isFrozen(s3), true);
+    assert.deepEqual({ ...s3 }, {
+      endpoint: "https://account-id.r2.cloudflarestorage.com",
+      region: "auto",
+      accessKeyId: "SuperSecretAccessKeyId",
+      secretAccessKey: "SuperSecretAccessKey",
+      bucket: "rental-cms-receipts",
+    });
+
+    for (const name of ["S3_ENDPOINT", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"]) {
+      assert.match(configError(validEnv({ [name]: undefined })), new RegExp(`${name} is required`));
+      assert.match(configError(validEnv({ [name]: "" })), new RegExp(`${name} is required`));
+    }
+  });
+
+  it("validates the S3 endpoint, region and bucket formats without echoing values", () => {
+    assert.match(configError(validEnv({ S3_ENDPOINT: "ftp://storage.example.test" })), /S3_ENDPOINT must be an http:\/\/ or https:\/\/ URL/);
+    assert.match(configError(validEnv({ S3_REGION: "Auto Region" })), /S3_REGION must be a region name/);
+    assert.match(configError(validEnv({ S3_BUCKET: "Bad_Bucket" })), /S3_BUCKET must be a valid bucket name/);
+    assert.match(configError(validEnv({ S3_SECRET_ACCESS_KEY: "x".repeat(257) })), /S3_SECRET_ACCESS_KEY must be 1 to 256 characters/);
+    assert.doesNotMatch(configError(validEnv({ S3_ACCESS_KEY_ID: "SuperSecret".repeat(30) })), /SuperSecret/);
+    assert.equal(parseConfig(validEnv({ S3_ENDPOINT: "http://127.0.0.1:9000", S3_REGION: "us-east-1" })).s3.region, "us-east-1");
   });
 });

@@ -8,6 +8,7 @@ import {
 import { config } from "./lib/config.js";
 import prisma from "./prisma.js";
 import { closeRedisClient, createRedisClient } from "./redis.js";
+import { createStorageClient, createStorageGateway } from "./storage/gateway.js";
 import { createStripeClient, createStripeGateway } from "./stripe/gateway.js";
 import { createStripeWebhookHandler } from "./stripe/webhook.js";
 
@@ -16,6 +17,10 @@ const PORT = config.port;
 const billingGateway = createStripeGateway(
   createStripeClient(config.stripeSecretKey),
 );
+
+const storageGateway = createStorageGateway(createStorageClient(config.s3), {
+  bucket: config.s3.bucket,
+});
 
 const handleStripeWebhook = createStripeWebhookHandler({
   prisma,
@@ -38,6 +43,7 @@ const app = createApp({
     verifyIdToken,
     hasLiveSuperAdminClaim,
     billingGateway,
+    storageGateway,
     redis,
     trustProxy: config.trustProxy,
   },

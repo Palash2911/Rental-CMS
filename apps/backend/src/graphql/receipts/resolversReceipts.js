@@ -6,8 +6,10 @@ import {
 import { validate } from "../../lib/validate.js";
 import {
   createReceiptSchema,
+  receiptFileUrlSchema,
   receiptIdSchema,
   receiptsByAssignmentSchema,
+  requestReceiptUploadSchema,
 } from "./schemasReceipts.js";
 import * as receiptService from "./serviceReceipts.js";
 
@@ -34,11 +36,17 @@ export const receiptResolvers = {
       validate(receiptIdSchema, args);
       return receiptService.toPublicReceipt(receipt);
     },
+
+    receiptFileUrl: async (_parent, args, context) => {
+      await requireReceiptAccess(context, args.receiptId, READ_ACCESS);
+      const input = validate(receiptFileUrlSchema, args);
+      return receiptService.receiptFileUrl(context, input);
+    },
   },
 
   Mutation: {
     createReceipt: async (_parent, args, context) => {
-      const { user, ownerAccount } = await requireAssignmentAccess(
+      const { user, assignment, ownerAccount } = await requireAssignmentAccess(
         context,
         args.input.tenantAssignmentId,
         TENANT_WRITE_ACCESS,
@@ -48,6 +56,22 @@ export const receiptResolvers = {
         ...input,
         actorId: user.id,
         ownerAccountId: ownerAccount.id,
+        houseId: assignment.houseId,
+      });
+    },
+
+    requestReceiptUpload: async (_parent, args, context) => {
+      const { user, assignment, ownerAccount } = await requireAssignmentAccess(
+        context,
+        args.input.tenantAssignmentId,
+        TENANT_WRITE_ACCESS,
+      );
+      const { input } = validate(requestReceiptUploadSchema, args);
+      return receiptService.requestReceiptUpload(context, {
+        ...input,
+        actorId: user.id,
+        ownerAccountId: ownerAccount.id,
+        houseId: assignment.houseId,
       });
     },
   },

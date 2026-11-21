@@ -20,6 +20,7 @@ import {
   recordingLogger,
 } from "../support/factories.js";
 import { expectError, run } from "../support/graphql.js";
+import { fakeStorageGateway } from "../support/storage.js";
 import {
   recordingStripeGateway,
   signWebhook,
@@ -117,7 +118,12 @@ function storedAccount(account) {
 
 function runJob(stripe, options = {}, dependencies = {}) {
   return runAccountDeletion(
-    { prisma: dependencies.prisma ?? prisma, billingGateway: stripe.gateway, log: dependencies.log ?? recordingLogger() },
+    {
+      prisma: dependencies.prisma ?? prisma,
+      billingGateway: stripe.gateway,
+      storageGateway: dependencies.storageGateway ?? fakeStorageGateway().gateway,
+      log: dependencies.log ?? recordingLogger(),
+    },
     { now: NOW, ...options },
   );
 }
@@ -154,6 +160,7 @@ describe("accountDeletion", () => {
       deleted: {
         issues: 1,
         receipts: 1,
+        receiptUploads: 0,
         leaveRequests: 1,
         invitations: 2,
         tenantAssignments: 1,
@@ -163,6 +170,7 @@ describe("accountDeletion", () => {
         subscriptions: 1,
       },
       stripeSubscriptionCanceled: true,
+      storageObjectsDeleted: 0,
     });
   });
 

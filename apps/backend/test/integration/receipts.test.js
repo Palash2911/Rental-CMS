@@ -230,10 +230,10 @@ describe("createReceipt", () => {
 });
 
 describe("receipt immutability", () => {
-  it("the schema has createReceipt as its only receipt mutation", () => {
+  it("the schema has no mutation that changes or removes a receipt, or its file", () => {
     const mutations = Object.keys(schema.getMutationType().getFields());
 
-    assert.deepEqual(mutations.filter((name) => /receipt/i.test(name)), ["createReceipt"]);
+    assert.deepEqual(mutations.filter((name) => /receipt/i.test(name)).sort(), ["createReceipt", "requestReceiptUpload"]);
   });
 
   it("the Receipt type has no fileUrl field", async () => {

@@ -11,8 +11,10 @@ import {
   OwnerMemberRole,
   TenantAssignmentStatus,
 } from "../../src/generated/prisma/enums.ts";
+import { newReceiptFileKey } from "../../src/graphql/receipts/receiptFiles.js";
 import { prisma } from "./db.js";
 import { redis as testRedis } from "./redis.js";
+import { unexpectedStorageGateway } from "./storage.js";
 import { unexpectedStripeGateway } from "./stripe.js";
 
 const FIREBASE_UID_LENGTH = 28;
@@ -71,6 +73,7 @@ export function tokenContext({
   superAdmin = false,
   liveSuperAdmin = superAdmin,
   billingGateway = unexpectedStripeGateway(),
+  storageGateway = unexpectedStorageGateway(),
   log = recordingLogger(),
   redis = testRedis,
 }) {
@@ -84,6 +87,7 @@ export function tokenContext({
     isSuperAdmin: superAdmin,
     hasLiveSuperAdminClaim: async () => liveSuperAdmin,
     billingGateway,
+    storageGateway,
     redis,
   };
 }
@@ -320,7 +324,7 @@ export function createLeaveRequest(
 /** Inserts a receipt on an assignment directly (test setup only). Pass `createdAt` to fix the paging order. */
 export function createReceipt(
   assignment,
-  { amountCents = 50_000, currency = "AUD", paidAt = new Date("2026-11-01T00:00:00.000Z"), note = null, createdAt } = {},
+  { amountCents = 50_000, currency = "AUD", paidAt = new Date("2026-11-01T00:00:00.000Z"), note = null, createdAt, receiptUploadId = null } = {},
 ) {
   return prisma.receipt.create({
     data: {
@@ -329,6 +333,44 @@ export function createReceipt(
       currency,
       paidAt,
       note,
+      receiptUploadId,
+      ...(createdAt ? { createdAt } : {}),
+    },
+  });
+}
+
+/**
+ * Inserts a requested receipt upload directly (test setup only), keyed under the
+ * assignment's prefix like requestReceiptUpload. Pass lifecycle timestamps to place it.
+ */
+export async function createReceiptUpload(
+  assignment,
+  requester,
+  {
+    contentType = "application/pdf",
+    sizeBytes = 2048,
+    createdAt,
+    attachedAt = null,
+    verifiedAt = null,
+    discardedAt = null,
+  } = {},
+) {
+  const { ownerAccountId } = await prisma.house.findUnique({
+    where: { id: assignment.houseId },
+    select: { ownerAccountId: true },
+  });
+
+  return prisma.receiptUpload.create({
+    data: {
+      key: newReceiptFileKey({ ownerAccountId, tenantAssignmentId: assignment.id, contentType }),
+      ownerAccountId,
+      tenantAssignmentId: assignment.id,
+      requestedByUserId: requester.id,
+      contentType,
+      sizeBytes,
+      attachedAt,
+      verifiedAt,
+      discardedAt,
       ...(createdAt ? { createdAt } : {}),
     },
   });

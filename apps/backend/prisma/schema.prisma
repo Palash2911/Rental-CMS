@@ -88,6 +88,7 @@ model User {
   sentInvitations        Invitation[]
   sentMemberInvitations  MemberInvitation[]
   respondedLeaveRequests LeaveRequest[]
+  receiptUploads         ReceiptUpload[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -111,6 +112,7 @@ model OwnerAccount {
   houses            House[]
   subscription      Subscription?
   activityLogs      ActivityLog[]
+  receiptUploads    ReceiptUpload[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -262,10 +264,11 @@ model TenantAssignment {
   tenantProfile TenantProfile @relation(fields: [tenantProfileId], references: [id])
   house         House         @relation(fields: [houseId], references: [id])
 
-  receipts      Receipt[]
-  issues        Issue[]
-  leaveRequests LeaveRequest[]
-  invitation    Invitation?
+  receipts       Receipt[]
+  issues         Issue[]
+  leaveRequests  LeaveRequest[]
+  invitation     Invitation?
+  receiptUploads ReceiptUpload[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -316,12 +319,54 @@ model Receipt {
   paidAt             DateTime
   note               String?
   fileUrl            String?
+  // The attached file, if any. Unique, so one upload belongs to at most one receipt.
+  // Set only at creation: receipts stay immutable.
+  receiptUploadId    String?  @unique
 
   tenantAssignment TenantAssignment @relation(fields: [tenantAssignmentId], references: [id])
+  receiptUpload    ReceiptUpload?   @relation(fields: [receiptUploadId], references: [id])
 
   createdAt DateTime @default(now()) @map("uploadedAt")
 
   @@index([tenantAssignmentId, createdAt, id])
+}
+
+// A file a tenant was given a presigned PUT for. Records what was requested, so attaching
+// it to a receipt and the cleanup job can compare against the stored object. The storage
+// key is never exposed to clients.
+model ReceiptUpload {
+  id String @id @default(cuid())
+
+  // receipts/<ownerAccountId>/<tenantAssignmentId>/<uuid>
+  key                String @unique
+  ownerAccountId     String
+  tenantAssignmentId String
+  requestedByUserId  String
+  contentType        String
+  sizeBytes          Int
+
+  // Lifecycle, each set at most once and only by compare-and-set on this row, so attaching
+  // and the cleanup jobs cannot both win: attachedAt by createReceipt; verifiedAt by the
+  // hourly check once the stored object matched the request; discardedAt when cleanup
+  // claims the upload for deletion (the row is removed once the object is deleted).
+  attachedAt  DateTime?
+  verifiedAt  DateTime?
+  discardedAt DateTime?
+
+  ownerAccount     OwnerAccount     @relation(fields: [ownerAccountId], references: [id])
+  tenantAssignment TenantAssignment @relation(fields: [tenantAssignmentId], references: [id])
+  requestedBy      User             @relation(fields: [requestedByUserId], references: [id])
+  receipt          Receipt?
+
+  createdAt DateTime @default(now())
+
+  @@index([ownerAccountId])
+  @@index([tenantAssignmentId])
+  @@index([requestedByUserId])
+  // Daily scan: unattached uploads past 24 hours.
+  @@index([attachedAt, createdAt])
+  // Hourly scan: unattached, unverified uploads past 15 minutes.
+  @@index([attachedAt, verifiedAt, createdAt])
 }
 
 model Issue {

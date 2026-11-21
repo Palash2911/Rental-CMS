@@ -7,6 +7,7 @@ import {
   HTTP_STATUS,
   UnauthenticatedError,
 } from "../../src/lib/errors.js";
+import { unexpectedStorageGateway } from "../support/storage.js";
 import { unexpectedStripeGateway } from "../support/stripe.js";
 
 const PRISMA = Object.freeze({ name: "prisma stand-in" });
@@ -16,6 +17,7 @@ function hasLiveSuperAdminClaim() {
 }
 
 const billingGateway = unexpectedStripeGateway();
+const storageGateway = unexpectedStorageGateway();
 
 // A Redis stand-in that always reports the first hit of a window, so no limit is reached.
 // The real limits and Redis are covered by test/integration/rateLimit.test.js.
@@ -47,6 +49,7 @@ function buildContext({ verifyIdToken, authorization }) {
     verifyIdToken,
     hasLiveSuperAdminClaim,
     billingGateway,
+    storageGateway,
     redis,
   });
   return createContext({ request: requestWith(authorization) });
@@ -68,6 +71,7 @@ describe("createContextFactory", () => {
     verifyIdToken: async () => ({ uid: "uid-1" }),
     hasLiveSuperAdminClaim,
     billingGateway,
+    storageGateway,
     redis,
   };
 
@@ -86,6 +90,9 @@ describe("createContextFactory", () => {
     ["billingGateway", undefined],
     ["billingGateway", null],
     ["billingGateway", { createCheckoutSession: () => null }],
+    ["storageGateway", undefined],
+    ["storageGateway", null],
+    ["storageGateway", { presignUpload: () => null }],
     ["redis", undefined],
     ["redis", null],
     ["redis", { get: () => null }],
@@ -122,6 +129,7 @@ describe("createContext", () => {
         isSuperAdmin: false,
         hasLiveSuperAdminClaim: undefined,
         billingGateway: undefined,
+        storageGateway,
         redis,
       },
     );

@@ -149,6 +149,7 @@ const RECEIPT_FIELDS = Object.freeze({
   currency: true,
   paidAt: true,
   note: true,
+  receiptUploadId: true,
   createdAt: true,
 });
 

@@ -1,5 +1,6 @@
 import { OwnerAccountStatus } from "../generated/prisma/enums.ts";
 import { lockOwnerAccount } from "../graphql/billing/subscriptionStore.js";
+import { accountFilePrefix } from "../graphql/receipts/receiptFiles.js";
 import {
   ACTIVITY_ACTIONS,
   ENTITY_TYPES,
@@ -24,6 +25,8 @@ const TOMBSTONE_NAME = "";
 const MESSAGES = Object.freeze({
   STRIPE_FAILED:
     "Account deletion deferred: Stripe could not cancel billing. The next run retries.",
+  STORAGE_FAILED:
+    "Account deletion deferred: stored receipt files could not be deleted. The next run retries.",
   SUBSCRIPTION_CHANGED:
     "Account deletion deferred: the subscription changed during the run. The next run retries.",
 });
@@ -109,6 +112,25 @@ async function stopBilling(gateway, ownerAccountId, subscription) {
   return canceled;
 }
 
+// Before the transaction, like stopBilling: no lock is held during the storage calls, and
+// deleting a key twice is harmless, so a run that fails halfway repeats it next time. Lists
+// the account's whole prefix (orphaned uploads included), one page per delete batch.
+// Returns how many objects were deleted.
+async function deleteStoredFiles(storageGateway, ownerAccountId) {
+  const prefix = accountFilePrefix(ownerAccountId);
+  let deleted = 0;
+  let continuationToken = null;
+
+  do {
+    const page = await storageGateway.listKeys({ prefix, continuationToken });
+    await storageGateway.deleteObjects(page.keys);
+    deleted += page.keys.length;
+    continuationToken = page.nextToken;
+  } while (continuationToken);
+
+  return deleted;
+}
+
 async function lockHousesOfAccount(tx, ownerAccountId) {
   const rows = await tx.$queryRaw`
     SELECT id FROM "House" WHERE "ownerAccountId" = ${ownerAccountId}
@@ -155,6 +177,9 @@ async function deleteAccountData(tx, ownerAccountId, houseIds) {
   counts.receipts = (
     await tx.receipt.deleteMany({ where: { tenantAssignment: byHouse } })
   ).count;
+  counts.receiptUploads = (
+    await tx.receiptUpload.deleteMany({ where: { ownerAccountId } })
+  ).count;
   counts.leaveRequests = (
     await tx.leaveRequest.deleteMany({ where: byHouse })
   ).count;
@@ -180,7 +205,7 @@ async function deleteAccountData(tx, ownerAccountId, houseIds) {
   return counts;
 }
 
-function deleteAccount({ prisma, billingGateway, log }, now) {
+function deleteAccount({ prisma, billingGateway, storageGateway, log }, now) {
   return async (ownerAccountId) => {
     const subscription = await prisma.subscription.findUnique({
       where: { ownerAccountId },
@@ -199,6 +224,18 @@ function deleteAccount({ prisma, billingGateway, log }, now) {
       log.warn(
         { err: error, job: ACCOUNT_DELETION_JOB, ownerAccountId },
         MESSAGES.STRIPE_FAILED,
+      );
+      return OUTCOMES.DEFERRED;
+    }
+
+    let storageObjectsDeleted;
+
+    try {
+      storageObjectsDeleted = await deleteStoredFiles(storageGateway, ownerAccountId);
+    } catch (error) {
+      log.warn(
+        { err: error, job: ACCOUNT_DELETION_JOB, ownerAccountId },
+        MESSAGES.STORAGE_FAILED,
       );
       return OUTCOMES.DEFERRED;
     }
@@ -244,7 +281,7 @@ function deleteAccount({ prisma, billingGateway, log }, now) {
           action: ACTIVITY_ACTIONS.DELETION_EXECUTED,
           ownerAccountId,
           performedByUserId: null,
-          metadata: { deleted, stripeSubscriptionCanceled },
+          metadata: { deleted, stripeSubscriptionCanceled, storageObjectsDeleted },
         });
 
         return OUTCOMES.DONE;

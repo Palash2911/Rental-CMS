@@ -5,6 +5,7 @@ import { createJobProcessor, MAINTENANCE_QUEUE, registerJobSchedulers } from "./
 import { config } from "./lib/config.js";
 import prisma from "./prisma.js";
 import { closeRedisClient, createWorkerRedisClient } from "./redis.js";
+import { createStorageClient, createStorageGateway } from "./storage/gateway.js";
 import { createStripeClient, createStripeGateway } from "./stripe/gateway.js";
 
 // Jobs process one at a time per worker; a second worker only adds failover, because each
@@ -20,13 +21,16 @@ const connection = createWorkerRedisClient(config.redisUrl, {
 });
 
 const billingGateway = createStripeGateway(createStripeClient(config.stripeSecretKey));
+const storageGateway = createStorageGateway(createStorageClient(config.s3), {
+  bucket: config.s3.bucket,
+});
 
 const queue = new Queue(MAINTENANCE_QUEUE, { connection });
 await registerJobSchedulers(queue);
 
 const worker = new Worker(
   MAINTENANCE_QUEUE,
-  createJobProcessor({ prisma, billingGateway, log }),
+  createJobProcessor({ prisma, billingGateway, storageGateway, log }),
   { connection, concurrency: WORKER_CONCURRENCY },
 );
 

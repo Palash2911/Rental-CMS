@@ -10,6 +10,7 @@ export const ENTITY_TYPES = Object.freeze({
   MEMBER_INVITATION: "MemberInvitation",
   OWNER_ACCOUNT_MEMBER: "OwnerAccountMember",
   LEAVE_REQUEST: "LeaveRequest",
+  RECEIPT_UPLOAD: "ReceiptUpload",
 });
 
 export const ACTIVITY_ACTIONS = Object.freeze({
@@ -38,6 +39,7 @@ export const ACTIVITY_ACTIONS = Object.freeze({
   NOTICE_GIVEN: "NOTICE_GIVEN",
   NOTICE_WITHDRAWN: "NOTICE_WITHDRAWN",
   DELETION_EXECUTED: "DELETION_EXECUTED",
+  UPLOAD_REQUESTED: "UPLOAD_REQUESTED",
 });
 
 /**

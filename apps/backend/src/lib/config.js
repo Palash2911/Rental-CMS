@@ -16,6 +16,11 @@ const STRIPE_LIVE_KEY_PATTERN = /^(sk|rk)_live_/;
 const STRIPE_WEBHOOK_SECRET_PATTERN = /^whsec_\S+$/;
 const REDIS_PROTOCOL = /^rediss?$/;
 const BOOLEAN_FLAGS = Object.freeze({ TRUE: "true", FALSE: "false" });
+// S3 naming rules (3 to 63 characters of lowercase letters, digits, dots and hyphens,
+// starting and ending with a letter or digit), which R2 and other providers also accept.
+const S3_BUCKET_PATTERN = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+const S3_REGION_PATTERN = /^[a-z0-9-]{1,32}$/;
+const S3_CREDENTIAL_MAX_LENGTH = 256;
 
 const VARIABLE_NAMES = Object.freeze([
   "NODE_ENV",
@@ -31,6 +36,11 @@ const VARIABLE_NAMES = Object.freeze([
   "STRIPE_PORTAL_RETURN_URL",
   "REDIS_URL",
   "TRUST_PROXY",
+  "S3_ENDPOINT",
+  "S3_REGION",
+  "S3_ACCESS_KEY_ID",
+  "S3_SECRET_ACCESS_KEY",
+  "S3_BUCKET",
 ]);
 
 const REQUIREMENTS = Object.freeze({
@@ -47,6 +57,11 @@ const REQUIREMENTS = Object.freeze({
   STRIPE_PORTAL_RETURN_URL: "must be an http:// or https:// URL",
   REDIS_URL: "must be a redis:// or rediss:// URL",
   TRUST_PROXY: `must be "${BOOLEAN_FLAGS.TRUE}" or "${BOOLEAN_FLAGS.FALSE}"`,
+  S3_ENDPOINT: "must be an http:// or https:// URL",
+  S3_REGION: "must be a region name of lowercase letters, digits and hyphens, such as auto",
+  S3_ACCESS_KEY_ID: `must be 1 to ${S3_CREDENTIAL_MAX_LENGTH} characters`,
+  S3_SECRET_ACCESS_KEY: `must be 1 to ${S3_CREDENTIAL_MAX_LENGTH} characters`,
+  S3_BUCKET: "must be a valid bucket name (3 to 63 lowercase letters, digits, dots or hyphens)",
 });
 
 const MISSING_REASON = "is required";
@@ -72,6 +87,11 @@ const envSchema = z.object({
   STRIPE_PORTAL_RETURN_URL: z.url({ protocol: HTTP_PROTOCOL }),
   REDIS_URL: z.url({ protocol: REDIS_PROTOCOL }),
   TRUST_PROXY: z.enum(Object.values(BOOLEAN_FLAGS)).default(BOOLEAN_FLAGS.FALSE),
+  S3_ENDPOINT: z.url({ protocol: HTTP_PROTOCOL }),
+  S3_REGION: z.string().regex(S3_REGION_PATTERN),
+  S3_ACCESS_KEY_ID: z.string().min(1).max(S3_CREDENTIAL_MAX_LENGTH),
+  S3_SECRET_ACCESS_KEY: z.string().min(1).max(S3_CREDENTIAL_MAX_LENGTH),
+  S3_BUCKET: z.string().regex(S3_BUCKET_PATTERN),
 });
 
 // Blank entries such as `PORT=` in an env file count as unset.
@@ -175,6 +195,13 @@ export function parseConfig(source) {
     stripePortalReturnUrl: env.STRIPE_PORTAL_RETURN_URL,
     redisUrl: env.REDIS_URL,
     trustProxy: env.TRUST_PROXY === BOOLEAN_FLAGS.TRUE,
+    s3: Object.freeze({
+      endpoint: env.S3_ENDPOINT,
+      region: env.S3_REGION,
+      accessKeyId: env.S3_ACCESS_KEY_ID,
+      secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+      bucket: env.S3_BUCKET,
+    }),
   });
 }
 

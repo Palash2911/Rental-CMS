@@ -33,6 +33,14 @@ const BILLING_GATEWAY_METHODS = Object.freeze([
   "cancelSubscription",
 ]);
 
+const STORAGE_GATEWAY_METHODS = Object.freeze([
+  "presignUpload",
+  "presignDownload",
+  "headObject",
+  "listKeys",
+  "deleteObjects",
+]);
+
 // The commands the rate limit (createRedisClient's rateLimitHit) and the user cache use.
 const REDIS_METHODS = Object.freeze(["rateLimitHit", "get", "set", "del"]);
 
@@ -45,6 +53,19 @@ function assertBillingGateway(billingGateway) {
   if (!valid) {
     throw new TypeError(
       `createContextFactory requires a billingGateway with ${BILLING_GATEWAY_METHODS.join(", ")}.`,
+    );
+  }
+}
+
+function assertStorageGateway(storageGateway) {
+  const valid =
+    storageGateway !== null &&
+    typeof storageGateway === "object" &&
+    STORAGE_GATEWAY_METHODS.every((name) => typeof storageGateway[name] === "function");
+
+  if (!valid) {
+    throw new TypeError(
+      `createContextFactory requires a storageGateway with ${STORAGE_GATEWAY_METHODS.join(", ")}.`,
     );
   }
 }
@@ -67,10 +88,12 @@ function assertDependencies({
   verifyIdToken,
   hasLiveSuperAdminClaim,
   billingGateway,
+  storageGateway,
   redis,
   trustProxy,
 }) {
   assertBillingGateway(billingGateway);
+  assertStorageGateway(storageGateway);
   assertRedis(redis);
 
   if (trustProxy !== undefined && typeof trustProxy !== "boolean") {
@@ -109,6 +132,7 @@ export function createContextFactory(dependencies) {
     verifyIdToken,
     hasLiveSuperAdminClaim,
     billingGateway,
+    storageGateway,
     redis,
     trustProxy = false,
   } = dependencies;
@@ -184,6 +208,7 @@ export function createContextFactory(dependencies) {
       ...identity,
       hasLiveSuperAdminClaim,
       billingGateway,
+      storageGateway,
       redis,
     };
   };

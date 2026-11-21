@@ -21,6 +21,7 @@ export const SENSITIVE_MUTATIONS = Object.freeze([
   "createMemberInvitation",
   "startCheckout",
   "openBillingPortal",
+  "requestReceiptUpload",
 ]);
 
 /** Queries that return a whole data set in one response; they share the sensitive bucket. */
