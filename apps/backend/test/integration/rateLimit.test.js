@@ -3,6 +3,7 @@ import { beforeEach, describe, it } from "node:test";
 
 import { parse } from "graphql";
 
+import { MAX_ROOT_FIELDS } from "../../src/lib/queryLimits.js";
 import {
   enforceRateLimit,
   mutationRootFields,
@@ -20,6 +21,7 @@ const LEAVE =
 const CHECKOUT =
   "mutation ($id: ID!) { startCheckout(ownerAccountId: $id, plan: STARTER, interval: MONTH) { url } }";
 const INVITE_MEMBER = `mutation ($id: ID!) { createMemberInvitation(ownerAccountId: $id, email: "a@example.test") { id } }`;
+const LEAVE_REQUEST = `mutation ($id: ID!) { createLeaveRequest(input: { tenantAssignmentId: $id, requestedExitDate: "2099-01-01" }) { id } }`;
 const EXPORT =
   "query ($id: ID!) { tenancyExport(tenantAssignmentId: $id) { generatedAt } }";
 const MISSING_ACCOUNT = { id: "cjld2cjxh0000qzrmn831i7rn" };
@@ -171,12 +173,19 @@ describe("mutation limit (60 per minute per user)", () => {
     const token = tokenFor(firebaseUid());
     const args = `ownerAccountId: "${MISSING_ACCOUNT.id}"`;
 
-    assertTooManyRequests(
-      await postGraphql(
-        url,
-        aliased("leaveAccount", RATE_LIMITS.MUTATION.limit + 1, args),
-        { token },
+    // One operation may select at most MAX_ROOT_FIELDS fields (queryLimits.js), so the limit
+    // is reached with several full operations; each still counts every aliased field.
+    const perRequest = MAX_ROOT_FIELDS;
+    const fullRequests = RATE_LIMITS.MUTATION.limit / perRequest;
+
+    assertAllOk(
+      await repeat(fullRequests, () =>
+        postGraphql(url, aliased("leaveAccount", perRequest, args), { token }),
       ),
+      "aliased mutations",
+    );
+    assertTooManyRequests(
+      await postGraphql(url, aliased("leaveAccount", 1, args), { token }),
     );
 
     const fragment = `mutation { ...Leave } fragment Leave on Mutation { a: leaveAccount(${args}) { id } b: leaveAccount(${args}) { id } }`;
@@ -215,6 +224,12 @@ describe("sensitive mutation limit (10 per minute per user)", () => {
     );
     assertTooManyRequests(
       await postGraphql(url, INVITE_MEMBER, {
+        token,
+        variables: MISSING_ACCOUNT,
+      }),
+    );
+    assertTooManyRequests(
+      await postGraphql(url, LEAVE_REQUEST, {
         token,
         variables: MISSING_ACCOUNT,
       }),

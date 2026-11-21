@@ -32,6 +32,10 @@ const { ACTIVE, NOTICE_PERIOD } = TenantAssignmentStatus;
 
 const NOTICE_WITHDRAWN_REASON = "NOTICE_WITHDRAWN";
 
+/** Most leave requests one assignment may create in any 24 hours, withdrawn ones included. */
+export const MAX_LEAVE_REQUESTS_PER_DAY = 3;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 export const LEAVE_REQUEST_SELECT = Object.freeze({
   id: true,
   tenantAssignmentId: true,
@@ -50,6 +54,7 @@ const MESSAGES = Object.freeze({
   ALREADY_PENDING:
     "This tenant assignment already has a pending leave request.",
   NOT_PENDING: "This leave request is no longer pending.",
+  DAILY_LIMIT: `A tenant assignment can have at most ${MAX_LEAVE_REQUESTS_PER_DAY} leave requests in 24 hours. Try again later.`,
   NOTICE_NEEDS_ACTIVE: "Only an active tenant assignment can be given notice.",
   NOT_IN_NOTICE:
     "Only a tenant assignment in its notice period can have its notice withdrawn.",
@@ -119,6 +124,18 @@ async function assertNoPendingRequest(tx, tenantAssignmentId) {
   }
 }
 
+// Each request emails every owner, so a create-and-withdraw loop is capped per assignment.
+// Checked under the house lock, so concurrent creates cannot both slip under the cap.
+async function assertDailyRequestCapacity(tx, tenantAssignmentId, now) {
+  const recent = await tx.leaveRequest.count({
+    where: { tenantAssignmentId, createdAt: { gt: new Date(now.getTime() - MS_PER_DAY) } },
+  });
+
+  if (recent >= MAX_LEAVE_REQUESTS_PER_DAY) {
+    throw new ConflictError(MESSAGES.DAILY_LIMIT);
+  }
+}
+
 async function insertLeaveRequest(tx, data) {
   try {
     return await tx.leaveRequest.create({ data, select: LEAVE_REQUEST_SELECT });
@@ -151,6 +168,7 @@ export function createLeaveRequest(
       await lockHouse(tx, houseId);
       await assertActiveAssignment(tx, tenantAssignmentId);
       await assertNoPendingRequest(tx, tenantAssignmentId);
+      await assertDailyRequestCapacity(tx, tenantAssignmentId, new Date());
 
       const request = await insertLeaveRequest(tx, {
         tenantAssignmentId,
@@ -181,6 +199,7 @@ export function createLeaveRequest(
       for (const { userId } of owners) {
         emails.push(
           leaveRequestSubmittedEmail({
+            ownerAccountId,
             leaveRequestId: request.id,
             recipientUserId: userId,
           }),
@@ -245,6 +264,7 @@ function respondUnderHouseLock(
       if (notifyTenant) {
         emails.push(
           leaveRequestRespondedEmail({
+            ownerAccountId,
             leaveRequestId: request.id,
             status: request.status,
           }),
@@ -383,6 +403,7 @@ export function approveLeaveRequest(
 
       emails.push(
         leaveRequestRespondedEmail({
+          ownerAccountId,
           leaveRequestId: request.id,
           status: request.status,
         }),
@@ -414,6 +435,7 @@ export function giveNotice(
 
       emails.push(
         noticeGivenEmail({
+          ownerAccountId,
           activityLogId,
           tenantAssignmentId,
           plannedExitDate: toCalendarDate(assignment.plannedExitDate),
@@ -513,7 +535,7 @@ export function withdrawNotice(
       });
 
       emails.push(
-        noticeWithdrawnEmail({ activityLogId: log.id, tenantAssignmentId }),
+        noticeWithdrawnEmail({ ownerAccountId, activityLogId: log.id, tenantAssignmentId }),
       );
 
       return toPublicAssignment(assignment);

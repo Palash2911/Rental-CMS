@@ -28,6 +28,7 @@ export const ACCOUNT_STATUSES = Object.freeze({
   TENANT_READ: Object.freeze([APPROVED, BLOCKED, PENDING_DELETION]),
   TENANT_WRITE: Object.freeze([APPROVED]),
   MEMBER_BILLING: Object.freeze([APPROVED, PENDING, PENDING_DELETION]),
+  MEMBER_INVITE: Object.freeze([APPROVED]),
 });
 
 // Policies using these status sets are reads, so billing read-only never blocks them. Every

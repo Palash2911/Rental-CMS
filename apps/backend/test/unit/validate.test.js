@@ -40,7 +40,10 @@ describe("validate", () => {
     const schema = z.strictObject({ name: z.string() });
     const errors = fieldErrorsOf(schema, { name: "a", secretField: 1 });
 
-    assert.deepEqual(errors.map((error) => error.message), ["Unrecognized field."]);
+    assert.deepEqual(
+      errors.map((error) => error.message),
+      ["Unrecognized field."],
+    );
     assert.doesNotMatch(JSON.stringify(errors), /secretField/);
   });
 
@@ -51,7 +54,9 @@ describe("validate", () => {
   });
 
   it("describes type errors without the received value", () => {
-    const [error] = fieldErrorsOf(z.object({ count: z.number() }), { count: "seven" });
+    const [error] = fieldErrorsOf(z.object({ count: z.number() }), {
+      count: "seven",
+    });
 
     assert.equal(error.message, "Invalid type: expected number.");
     assert.doesNotMatch(error.message, /seven/);
@@ -66,7 +71,10 @@ describe("validate", () => {
 
   it("caps fieldErrors at 50", () => {
     const schema = z.array(z.number());
-    const errors = fieldErrorsOf(schema, Array.from({ length: 80 }, () => "x"));
+    const errors = fieldErrorsOf(
+      schema,
+      Array.from({ length: 80 }, () => "x"),
+    );
 
     assert.equal(errors.length, 50);
   });
@@ -80,8 +88,22 @@ describe("validate", () => {
 
 describe("id schemas", () => {
   it("accepts a cuid and rejects other strings", () => {
-    assert.equal(cuidIdSchema.safeParse("cjld2cjxh0000qzrmn831i7rn").success, true);
+    assert.equal(
+      cuidIdSchema.safeParse("cjld2cjxh0000qzrmn831i7rn").success,
+      true,
+    );
     assert.equal(cuidIdSchema.safeParse("not a cuid").success, false);
+  });
+
+  it("caps cuids at 64 characters, unlike z.cuid(), with the same message", () => {
+    const atLimit = `c${"a".repeat(63)}`;
+    const overLimit = `c${"a".repeat(64)}`;
+
+    assert.equal(cuidIdSchema.safeParse(atLimit).success, true);
+    const result = cuidIdSchema.safeParse(overLimit);
+    assert.equal(result.success, false);
+    assert.equal(result.error.issues[0].message, "Invalid cuid");
+    assert.equal(z.cuid().safeParse(overLimit).success, true);
   });
 
   it("matches zod's deprecated z.cuid() on acceptance and messages", () => {
@@ -110,7 +132,11 @@ describe("id schemas", () => {
     };
 
     for (const id of samples) {
-      assert.deepEqual(outcome(current, id), outcome(legacy, id), JSON.stringify(id));
+      assert.deepEqual(
+        outcome(current, id),
+        outcome(legacy, id),
+        JSON.stringify(id),
+      );
     }
   });
 
@@ -142,13 +168,20 @@ describe("calendarDateSchema", () => {
   });
 
   it("rejects timestamps and other formats", () => {
-    for (const value of ["2026-11-01T00:00:00Z", "01/11/2026", "2026-1-1", ""]) {
+    for (const value of [
+      "2026-11-01T00:00:00Z",
+      "01/11/2026",
+      "2026-1-1",
+      "",
+    ]) {
       assert.equal(calendarDateSchema.safeParse(value).success, false, value);
     }
   });
 
   it("reports exactly one error for a malformed date", () => {
-    const errors = fieldErrorsOf(z.object({ date: calendarDateSchema }), { date: "2026-02-30" });
+    const errors = fieldErrorsOf(z.object({ date: calendarDateSchema }), {
+      date: "2026-02-30",
+    });
 
     assert.deepEqual(errors, [
       { path: "date", message: "Enter a valid calendar date as YYYY-MM-DD." },
@@ -156,7 +189,9 @@ describe("calendarDateSchema", () => {
   });
 
   it("reports the year range message for an out-of-range year", () => {
-    const errors = fieldErrorsOf(z.object({ date: calendarDateSchema }), { date: "1999-12-31" });
+    const errors = fieldErrorsOf(z.object({ date: calendarDateSchema }), {
+      date: "1999-12-31",
+    });
 
     assert.deepEqual(errors, [
       { path: "date", message: "Dates must fall between 2000 and 2100." },

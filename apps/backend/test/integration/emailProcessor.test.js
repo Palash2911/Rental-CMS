@@ -44,7 +44,12 @@ async function invitationJob() {
   const account = await createOwnerAccount(owner, { name: "Harbour Rentals" });
   const house = await createHouse(account, { name: "Unit 4" });
   const invitation = await createInvitation(house, owner, { email: "invitee@example.test" });
-  return { owner, account, invitation, job: emailJob(tenantInvitationEmail({ invitationId: invitation.id })) };
+  return {
+    owner,
+    account,
+    invitation,
+    job: emailJob(tenantInvitationEmail({ ownerAccountId: account.id, invitationId: invitation.id })),
+  };
 }
 
 function failure(kind, { retryAfterMs = null, errorName = "validation_error" } = {}) {

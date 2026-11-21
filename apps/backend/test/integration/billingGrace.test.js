@@ -3,11 +3,24 @@ import { beforeEach, describe, it } from "node:test";
 
 import { DELETION_GRACE_DAYS } from "../../src/graphql/ownerAccount/serviceOwnerAccount.js";
 import { runAccountDeletion } from "../../src/jobs/accountDeletion.js";
-import { BILLING_GRACE_DAYS, runBillingGrace } from "../../src/jobs/billingGrace.js";
+import {
+  BILLING_GRACE_DAYS,
+  runBillingGrace,
+} from "../../src/jobs/billingGrace.js";
 import { processStripeWebhook } from "../../src/stripe/webhook.js";
-import { prisma, prismaFailingTransactions, resetDatabase } from "../support/db.js";
+import {
+  prisma,
+  prismaFailingTransactions,
+  resetDatabase,
+} from "../support/db.js";
 import { recordingNotifier } from "../support/email.js";
-import { contextFor, createOwnerAccount, createUser, firebaseUid, recordingLogger } from "../support/factories.js";
+import {
+  contextFor,
+  createOwnerAccount,
+  createUser,
+  firebaseUid,
+  recordingLogger,
+} from "../support/factories.js";
 import { expectData, run } from "../support/graphql.js";
 import {
   recordingStripeGateway,
@@ -19,7 +32,11 @@ import {
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const NOW = new Date("2027-03-01T02:00:00.000Z");
-const CANCELED = Object.freeze({ plan: "STARTER", interval: "MONTH", stripeStatus: "canceled" });
+const CANCELED = Object.freeze({
+  plan: "STARTER",
+  interval: "MONTH",
+  stripeStatus: "canceled",
+});
 
 function daysBeforeNow(days) {
   return new Date(NOW.getTime() - days * MS_PER_DAY);
@@ -40,20 +57,30 @@ function stored(account) {
 }
 
 function deletionLogs() {
-  return prisma.activityLog.findMany({ where: { action: "DELETION_SCHEDULED" }, orderBy: { createdAt: "asc" } });
+  return prisma.activityLog.findMany({
+    where: { action: "DELETION_SCHEDULED" },
+    orderBy: { createdAt: "asc" },
+  });
 }
 
 function runJob(options = {}, dependencies = {}) {
   const log = dependencies.log ?? recordingLogger();
   return runBillingGrace(
-    { prisma: dependencies.prisma ?? prisma, notifier: dependencies.notifier ?? recordingNotifier(), log },
+    {
+      prisma: dependencies.prisma ?? prisma,
+      notifier: dependencies.notifier ?? recordingNotifier(),
+      log,
+    },
     { now: NOW, ...options },
   );
 }
 
-const SCHEDULE_DELETION = "mutation ($id: ID!) { scheduleOwnerAccountDeletion(id: $id) { status } }";
-const ADMIN_SCHEDULE_DELETION = "mutation ($id: ID!) { adminScheduleOwnerAccountDeletion(id: $id) { status } }";
-const CANCEL_DELETION = "mutation ($id: ID!) { cancelOwnerAccountDeletion(id: $id) { status } }";
+const SCHEDULE_DELETION =
+  "mutation ($id: ID!) { scheduleOwnerAccountDeletion(id: $id) { status } }";
+const ADMIN_SCHEDULE_DELETION =
+  "mutation ($id: ID!) { adminScheduleOwnerAccountDeletion(id: $id) { status } }";
+const CANCEL_DELETION =
+  "mutation ($id: ID!) { cancelOwnerAccountDeletion(id: $id) { status } }";
 
 // A read-only account with a Stripe customer and its old, canceled subscription, so a new
 // subscription for that customer reaches it through the webhook.
@@ -62,17 +89,33 @@ async function lapsedCustomer(days = BILLING_GRACE_DAYS + 1) {
   const fixture = await readOnlyAccount(days, {});
   await prisma.subscription.update({
     where: { ownerAccountId: fixture.account.id },
-    data: { stripeCustomerId, stripeSubscriptionId: `sub_test_old_${firebaseUid().toLowerCase()}` },
+    data: {
+      stripeCustomerId,
+      stripeSubscriptionId: `sub_test_old_${firebaseUid().toLowerCase()}`,
+    },
   });
   return { ...fixture, stripeCustomerId };
 }
 
 // Delivers customer.subscription.updated for a new subscription in `status`.
 function deliverSubscription(stripeCustomerId, status) {
-  const subscription = stripeSubscription({ customer: stripeCustomerId, status });
-  const stripe = recordingStripeGateway({ subscriptions: new Map([[subscription.id, subscription]]) });
+  const subscription = stripeSubscription({
+    customer: stripeCustomerId,
+    status,
+  });
+  const stripe = recordingStripeGateway({
+    subscriptions: new Map([[subscription.id, subscription]]),
+  });
   const event = stripeEvent("customer.subscription.updated", subscription);
-  return processStripeWebhook({ prisma, gateway: stripe.gateway, notifier: recordingNotifier(), webhookSecret: TEST_WEBHOOK_SECRET }, signWebhook(event));
+  return processStripeWebhook(
+    {
+      prisma,
+      gateway: stripe.gateway,
+      notifier: recordingNotifier(),
+      webhookSecret: TEST_WEBHOOK_SECRET,
+    },
+    signWebhook(event),
+  );
 }
 
 beforeEach(resetDatabase);
@@ -81,20 +124,40 @@ describe("deletionReason", () => {
   it("records why a deletion was scheduled and clears it on cancel", async () => {
     const billing = await readOnlyAccount(BILLING_GRACE_DAYS + 1);
     await runJob();
-    assert.equal((await stored(billing.account)).deletionReason, "BILLING_GRACE");
+    assert.equal(
+      (await stored(billing.account)).deletionReason,
+      "BILLING_GRACE",
+    );
 
     const owner = await createUser();
     const byOwner = await createOwnerAccount(owner);
-    expectData(await run(contextFor(owner), SCHEDULE_DELETION, { id: byOwner.id }));
+    expectData(
+      await run(contextFor(owner), SCHEDULE_DELETION, { id: byOwner.id }),
+    );
     assert.equal((await stored(byOwner)).deletionReason, "OWNER_REQUEST");
 
     const byAdmin = await createOwnerAccount(await createUser());
-    expectData(await run(contextFor(await createUser(), { superAdmin: true }), ADMIN_SCHEDULE_DELETION, { id: byAdmin.id }));
+    expectData(
+      await run(
+        contextFor(await createUser(), { superAdmin: true }),
+        ADMIN_SCHEDULE_DELETION,
+        { id: byAdmin.id },
+      ),
+    );
     assert.equal((await stored(byAdmin)).deletionReason, "ADMIN_REQUEST");
 
-    expectData(await run(contextFor(owner), CANCEL_DELETION, { id: byOwner.id }));
+    expectData(
+      await run(contextFor(owner), CANCEL_DELETION, { id: byOwner.id }),
+    );
     const cancelled = await stored(byOwner);
-    assert.deepEqual([cancelled.status, cancelled.deletionReason, cancelled.deletionScheduledAt], ["APPROVED", null, null]);
+    assert.deepEqual(
+      [
+        cancelled.status,
+        cancelled.deletionReason,
+        cancelled.deletionScheduledAt,
+      ],
+      ["APPROVED", null, null],
+    );
   });
 });
 
@@ -108,21 +171,47 @@ describe("billing comes back during a billing deletion", () => {
     assert.equal(result.status, 200);
     const row = await stored(account);
     assert.deepEqual(
-      [row.status, row.statusBeforeDeletion, row.deletionScheduledAt, row.deletionReason],
+      [
+        row.status,
+        row.statusBeforeDeletion,
+        row.deletionScheduledAt,
+        row.deletionReason,
+      ],
       ["APPROVED", null, null, null],
     );
-    const subscription = await prisma.subscription.findUnique({ where: { ownerAccountId: account.id } });
+    const subscription = await prisma.subscription.findUnique({
+      where: { ownerAccountId: account.id },
+    });
     assert.equal(subscription.readOnlySince, null);
 
-    const [log] = await prisma.activityLog.findMany({ where: { entityId: account.id, action: "DELETION_CANCELLED" } });
+    const [log] = await prisma.activityLog.findMany({
+      where: { entityId: account.id, action: "DELETION_CANCELLED" },
+    });
     assert.equal(log.performedByUserId, null);
     assert.deepEqual(
-      { fromStatus: log.metadata.fromStatus, toStatus: log.metadata.toStatus, reason: log.metadata.reason, stripeStatus: log.metadata.stripeStatus },
-      { fromStatus: "PENDING_DELETION", toStatus: "APPROVED", reason: "SUBSCRIPTION_RESUMED", stripeStatus: "active" },
+      {
+        fromStatus: log.metadata.fromStatus,
+        toStatus: log.metadata.toStatus,
+        reason: log.metadata.reason,
+        stripeStatus: log.metadata.stripeStatus,
+      },
+      {
+        fromStatus: "PENDING_DELETION",
+        toStatus: "APPROVED",
+        reason: "SUBSCRIPTION_RESUMED",
+        stripeStatus: "active",
+      },
     );
     assert.ok(log.metadata.eventId.startsWith("evt_test_"));
 
-    const later = await runAccountDeletion({ prisma, billingGateway: recordingStripeGateway().gateway, log: recordingLogger() }, { now: new Date(NOW.getTime() + 60 * MS_PER_DAY) });
+    const later = await runAccountDeletion(
+      {
+        prisma,
+        billingGateway: recordingStripeGateway().gateway,
+        log: recordingLogger(),
+      },
+      { now: new Date(NOW.getTime() + 60 * MS_PER_DAY) },
+    );
     assert.equal(later.processed, 0);
   });
 
@@ -143,12 +232,25 @@ describe("billing comes back during a billing deletion", () => {
 
   it("leaves deletions the owner or an admin asked for, and ones with no recorded reason", async () => {
     const byOwner = await lapsedCustomer(1);
-    expectData(await run(contextFor(byOwner.owner), SCHEDULE_DELETION, { id: byOwner.account.id }));
+    expectData(
+      await run(contextFor(byOwner.owner), SCHEDULE_DELETION, {
+        id: byOwner.account.id,
+      }),
+    );
     const byAdmin = await lapsedCustomer(1);
-    expectData(await run(contextFor(await createUser(), { superAdmin: true }), ADMIN_SCHEDULE_DELETION, { id: byAdmin.account.id }));
+    expectData(
+      await run(
+        contextFor(await createUser(), { superAdmin: true }),
+        ADMIN_SCHEDULE_DELETION,
+        { id: byAdmin.account.id },
+      ),
+    );
     const legacy = await lapsedCustomer();
     await runJob();
-    await prisma.ownerAccount.update({ where: { id: legacy.account.id }, data: { deletionReason: null } });
+    await prisma.ownerAccount.update({
+      where: { id: legacy.account.id },
+      data: { deletionReason: null },
+    });
 
     for (const { account, stripeCustomerId } of [byOwner, byAdmin, legacy]) {
       await deliverSubscription(stripeCustomerId, "active");
@@ -158,7 +260,12 @@ describe("billing comes back during a billing deletion", () => {
       assert.ok(row.deletionScheduledAt);
     }
 
-    assert.equal(await prisma.activityLog.count({ where: { action: "DELETION_CANCELLED" } }), 0);
+    assert.equal(
+      await prisma.activityLog.count({
+        where: { action: "DELETION_CANCELLED" },
+      }),
+      0,
+    );
   });
 });
 
@@ -168,14 +275,27 @@ describe("billingGrace", () => {
 
     const summary = await runJob();
 
-    assert.deepEqual(summary, { job: "billingGrace", processed: 1, done: 1, skipped: 0, deferred: 0, failed: 0 });
+    assert.deepEqual(summary, {
+      job: "billingGrace",
+      processed: 1,
+      done: 1,
+      skipped: 0,
+      deferred: 0,
+      failed: 0,
+    });
     const row = await stored(account);
     assert.equal(row.status, "PENDING_DELETION");
     assert.equal(row.statusBeforeDeletion, "APPROVED");
-    assert.equal(row.deletionScheduledAt.toISOString(), new Date(NOW.getTime() + DELETION_GRACE_DAYS * MS_PER_DAY).toISOString());
+    assert.equal(
+      row.deletionScheduledAt.toISOString(),
+      new Date(NOW.getTime() + DELETION_GRACE_DAYS * MS_PER_DAY).toISOString(),
+    );
 
     const [log] = await deletionLogs();
-    assert.deepEqual([log.entityType, log.entityId, log.performedByUserId], ["OwnerAccount", account.id, null]);
+    assert.deepEqual(
+      [log.entityType, log.entityId, log.performedByUserId],
+      ["OwnerAccount", account.id, null],
+    );
     assert.deepEqual(log.metadata, {
       fromStatus: "APPROVED",
       toStatus: "PENDING_DELETION",
@@ -189,8 +309,14 @@ describe("billingGrace", () => {
     const untouched = [
       (await readOnlyAccount(BILLING_GRACE_DAYS - 1)).account,
       (await readOnlyAccount(BILLING_GRACE_DAYS)).account,
-      (await readOnlyAccount(BILLING_GRACE_DAYS + 5, { status: "BLOCKED" })).account,
-      (await readOnlyAccount(BILLING_GRACE_DAYS + 5, { status: "PENDING_DELETION", deletionScheduledAt: NOW })).account,
+      (await readOnlyAccount(BILLING_GRACE_DAYS + 5, { status: "BLOCKED" }))
+        .account,
+      (
+        await readOnlyAccount(BILLING_GRACE_DAYS + 5, {
+          status: "PENDING_DELETION",
+          deletionScheduledAt: NOW,
+        })
+      ).account,
       await createOwnerAccount(await createUser()),
       await createOwnerAccount(await createUser(), { billing: null }),
     ];
@@ -205,14 +331,25 @@ describe("billingGrace", () => {
 
   it("re-checks under the lock and skips an account whose billing access came back", async () => {
     const paid = await readOnlyAccount(BILLING_GRACE_DAYS + 3);
-    await prisma.subscription.update({ where: { ownerAccountId: paid.account.id }, data: { stripeStatus: "active" } });
+    await prisma.subscription.update({
+      where: { ownerAccountId: paid.account.id },
+      data: { stripeStatus: "active" },
+    });
     const enterprise = await readOnlyAccount(BILLING_GRACE_DAYS + 3);
-    await prisma.subscription.update({ where: { ownerAccountId: enterprise.account.id }, data: { enterprise: true } });
-    const pending = await readOnlyAccount(BILLING_GRACE_DAYS + 3, { status: "PENDING" });
+    await prisma.subscription.update({
+      where: { ownerAccountId: enterprise.account.id },
+      data: { enterprise: true },
+    });
+    const pending = await readOnlyAccount(BILLING_GRACE_DAYS + 3, {
+      status: "PENDING",
+    });
 
     const summary = await runJob();
 
-    assert.deepEqual([summary.processed, summary.done, summary.skipped], [3, 0, 3]);
+    assert.deepEqual(
+      [summary.processed, summary.done, summary.skipped],
+      [3, 0, 3],
+    );
     for (const { account } of [paid, enterprise, pending]) {
       assert.notEqual((await stored(account)).status, "PENDING_DELETION");
     }
@@ -222,7 +359,9 @@ describe("billingGrace", () => {
     const accounts = [];
 
     for (let index = 0; index < 5; index += 1) {
-      accounts.push((await readOnlyAccount(BILLING_GRACE_DAYS + 1 + index)).account);
+      accounts.push(
+        (await readOnlyAccount(BILLING_GRACE_DAYS + 1 + index)).account,
+      );
     }
 
     const summary = await runJob({ batchSize: 2 });
@@ -255,9 +394,15 @@ describe("billingGrace", () => {
     const [first, ...rest] = accounts.sort((a, b) => (a.id < b.id ? -1 : 1));
     const log = recordingLogger();
 
-    const summary = await runJob({}, { prisma: prismaFailingTransactions([1]), log });
+    const summary = await runJob(
+      {},
+      { prisma: prismaFailingTransactions([1]), log },
+    );
 
-    assert.deepEqual([summary.processed, summary.done, summary.failed], [3, 2, 1]);
+    assert.deepEqual(
+      [summary.processed, summary.done, summary.failed],
+      [3, 2, 1],
+    );
     assert.equal((await stored(first)).status, "APPROVED");
     for (const account of rest) {
       assert.equal((await stored(account)).status, "PENDING_DELETION");
@@ -277,11 +422,67 @@ describe("billingGrace", () => {
     const { owner, account } = await readOnlyAccount(BILLING_GRACE_DAYS + 1);
     await runJob();
 
-    expectData(await run(contextFor(owner), "mutation ($id: ID!) { cancelOwnerAccountDeletion(id: $id) { status } }", { id: account.id }));
+    expectData(
+      await run(
+        contextFor(owner),
+        "mutation ($id: ID!) { cancelOwnerAccountDeletion(id: $id) { status } }",
+        { id: account.id },
+      ),
+    );
     assert.equal((await stored(account)).status, "APPROVED");
 
     const again = await runJob();
     assert.equal(again.done, 1);
     assert.equal((await stored(account)).status, "PENDING_DELETION");
+  });
+
+  it("keeps the original deletion date when the owner cancels without paying, however late it re-runs", async () => {
+    const { owner, account } = await readOnlyAccount(BILLING_GRACE_DAYS + 1);
+    await runJob();
+    const original = (await stored(account)).deletionScheduledAt;
+    const cancel =
+      "mutation ($id: ID!) { cancelOwnerAccountDeletion(id: $id) { status } }";
+
+    for (const daysLater of [1, 5]) {
+      expectData(await run(contextFor(owner), cancel, { id: account.id }));
+      await runJob({ now: new Date(NOW.getTime() + daysLater * MS_PER_DAY) });
+
+      const rescheduled = await stored(account);
+      assert.equal(rescheduled.status, "PENDING_DELETION");
+      assert.equal(
+        rescheduled.deletionScheduledAt.toISOString(),
+        original.toISOString(),
+        `${daysLater} days later`,
+      );
+    }
+  });
+
+  it("gives a new lapse its own deletion date once access came back in between", async () => {
+    const { owner, account } = await readOnlyAccount(BILLING_GRACE_DAYS + 1);
+    await runJob();
+    const first = (await stored(account)).deletionScheduledAt;
+    expectData(
+      await run(
+        contextFor(owner),
+        "mutation ($id: ID!) { cancelOwnerAccountDeletion(id: $id) { status } }",
+        { id: account.id },
+      ),
+    );
+
+    // Billing came back and lapsed again: readOnlySince moves to the new lapse.
+    const later = new Date(NOW.getTime() + 60 * MS_PER_DAY);
+    await prisma.subscription.update({
+      where: { ownerAccountId: account.id },
+      data: {
+        readOnlySince: new Date(
+          later.getTime() - (BILLING_GRACE_DAYS + 1) * MS_PER_DAY,
+        ),
+      },
+    });
+    await runJob({ now: later });
+
+    const second = (await stored(account)).deletionScheduledAt;
+    assert.notEqual(second.toISOString(), first.toISOString());
+    assert.equal(second.getTime(), later.getTime() + 30 * MS_PER_DAY);
   });
 });

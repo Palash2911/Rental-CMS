@@ -6,7 +6,6 @@ export const memberTypeDefs = `
 
   type OwnerAccountMember {
     id: ID!
-    userId: ID!
     name: String
     email: String!
     role: OwnerMemberRole!
@@ -57,8 +56,8 @@ export const memberTypeDefs = `
     revokeMemberInvitation(id: ID!): MemberInvitation!
     acceptMemberInvitation(id: ID!): OwnerAccountMember!
     declineMemberInvitation(id: ID!): MemberInvitation!
-    removeMember(ownerAccountId: ID!, userId: ID!): OwnerAccountMember!
+    removeMember(ownerAccountId: ID!, memberId: ID!): OwnerAccountMember!
     leaveAccount(ownerAccountId: ID!): OwnerAccountMember!
-    transferOwnership(ownerAccountId: ID!, newPrimaryUserId: ID!): OwnershipTransfer!
+    transferOwnership(ownerAccountId: ID!, newPrimaryMemberId: ID!): OwnershipTransfer!
   }
 `;

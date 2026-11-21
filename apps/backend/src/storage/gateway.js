@@ -47,6 +47,16 @@ export function createStorageClient({ endpoint, region, accessKeyId, secretAcces
   });
 }
 
+// Keys end in "<uuid>.<ext>" (receiptFiles.js), which is already safe inside a quoted
+// filename; anything else falls back to a fixed name.
+const SAFE_FILENAME = /^[0-9a-z-]+\.[a-z]{3,4}$/;
+const FALLBACK_FILENAME = "receipt";
+
+function downloadDisposition(key) {
+  const filename = key.split("/").at(-1);
+  return `attachment; filename="${SAFE_FILENAME.test(filename) ? filename : FALLBACK_FILENAME}"`;
+}
+
 function isNotFound(error) {
   return error?.$metadata?.httpStatusCode === HTTP_NOT_FOUND;
 }
@@ -71,10 +81,14 @@ export function createStorageGateway(client, { bucket }) {
       );
     },
 
+    // Signed response-content-disposition: the browser saves the file instead of rendering
+    // it, so an uploaded PDF or image never opens inline from the storage origin.
     presignDownload({ key, expiresInSeconds }) {
-      return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
-        expiresIn: expiresInSeconds,
-      });
+      return getSignedUrl(
+        client,
+        new GetObjectCommand({ Bucket: bucket, Key: key, ResponseContentDisposition: downloadDisposition(key) }),
+        { expiresIn: expiresInSeconds },
+      );
     },
 
     /** `{ contentType, sizeBytes }` of the stored object, or null when there is none. */

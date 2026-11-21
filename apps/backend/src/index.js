@@ -38,8 +38,13 @@ const redis = createRedisClient(config.redisUrl, {
 // client (no offline queue) is what BullMQ recommends for a Queue, and keeps a Redis outage
 // from holding requests (the notifier also bounds each add).
 const emailQueue = new Queue(EMAIL_QUEUE, { connection: redis });
-const notifier = createEmailNotifier(emailQueue, {
-  warn: (...args) => app.yoga.log.warn(...args),
+const notifier = createEmailNotifier({
+  queue: emailQueue,
+  redis,
+  log: {
+    warn: (...args) => app.yoga.log.warn(...args),
+    error: (...args) => app.yoga.log.error(...args),
+  },
 });
 
 const handleStripeWebhook = createStripeWebhookHandler({
@@ -62,6 +67,7 @@ const app = createApp({
   },
   handleStripeWebhook,
   isDevelopment,
+  frontendUrl: config.frontendUrl,
 });
 
 const server = createServer(app.handleRequest);

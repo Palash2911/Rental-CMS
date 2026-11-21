@@ -18,10 +18,30 @@ const USER_SELECT = Object.freeze({
   createdAt: true,
 });
 
+/** Longest display name stored; longer names from the token are cut. */
+export const DISPLAY_NAME_MAX_LENGTH = 100;
+const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/g;
+
 const MESSAGES = Object.freeze({
   VERIFIED_EMAIL_REQUIRED: "A verified email address is required.",
   EMAIL_IN_USE: "This email address is already linked to another account.",
 });
+
+// The token's name claim is whatever the user typed into their Google or Firebase profile,
+// and it is shown to other people (owners, invitees, emails), so it is cleaned and capped.
+function displayName(name) {
+  if (typeof name !== "string") {
+    return null;
+  }
+
+  const cleaned = name
+    .replace(CONTROL_CHARACTERS, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, DISPLAY_NAME_MAX_LENGTH)
+    .trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
 
 function profileChanges(user, { email, emailVerified, name }) {
   const changes = {};
@@ -102,7 +122,10 @@ async function readCachedUser(redis, userId) {
 }
 
 async function writeCachedUser(redis, user) {
-  const entry = JSON.stringify({ ...user, createdAt: user.createdAt.toISOString() });
+  const entry = JSON.stringify({
+    ...user,
+    createdAt: user.createdAt.toISOString(),
+  });
 
   try {
     await redis.set(cacheKey(user.id), entry, "EX", USER_CACHE_TTL_SECONDS);
@@ -148,16 +171,17 @@ async function loadUser({ prisma, redis, userId }) {
 // isBlocked directly in the database) takes effect only when the entry expires.
 export async function syncUserFromToken(context) {
   const { prisma, redis, userId } = context;
+  const claims = { ...context, name: displayName(context.name) };
 
   const user = await loadUser(context);
 
   if (!user) {
-    const created = await createUser(context);
+    const created = await createUser(claims);
     await invalidateCachedUser(redis, userId);
     return created;
   }
 
-  const changes = profileChanges(user, context);
+  const changes = profileChanges(user, claims);
 
   if (!changes) {
     return user;

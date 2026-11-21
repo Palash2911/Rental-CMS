@@ -21,56 +21,84 @@ function key(...parts) {
 }
 
 /*
- * Each builder returns `{ type, key, data }` for one email. The key is stable for the event,
- * so a duplicate enqueue is dropped by BullMQ and a retried send by Resend. `data` holds ids
- * and the event's own values only: names and addresses are read when the email is sent, so
- * Redis never holds an email address.
+ * Each builder returns `{ type, key, ownerAccountId, data }` for one email. The key is
+ * stable for the event, so a duplicate enqueue is dropped by BullMQ and a retried send by
+ * Resend. `ownerAccountId` is the account the email is charged to (the notifier's daily
+ * budget); it is not sent to the worker. `data` holds ids and the event's own values only:
+ * names and addresses are read when the email is sent, so Redis never holds an address.
  */
 
-export function tenantInvitationEmail({ invitationId }) {
-  return { type: EMAIL_TYPES.TENANT_INVITATION, key: key("tenant-invitation", invitationId), data: { invitationId } };
+export function tenantInvitationEmail({ ownerAccountId, invitationId }) {
+  return {
+    type: EMAIL_TYPES.TENANT_INVITATION,
+    key: key("tenant-invitation", invitationId),
+    ownerAccountId,
+    data: { invitationId },
+  };
 }
 
-export function memberInvitationEmail({ memberInvitationId }) {
+export function memberInvitationEmail({ ownerAccountId, memberInvitationId }) {
   return {
     type: EMAIL_TYPES.MEMBER_INVITATION,
     key: key("member-invitation", memberInvitationId),
+    ownerAccountId,
     data: { memberInvitationId },
   };
 }
 
 /** One per owner (PRIMARY and every CO_OWNER), each with its own key. */
-export function leaveRequestSubmittedEmail({ leaveRequestId, recipientUserId }) {
+export function leaveRequestSubmittedEmail({
+  ownerAccountId,
+  leaveRequestId,
+  recipientUserId,
+}) {
   return {
     type: EMAIL_TYPES.LEAVE_REQUEST_SUBMITTED,
     key: key("leave-request-submitted", leaveRequestId, recipientUserId),
+    ownerAccountId,
     data: { leaveRequestId, recipientUserId },
   };
 }
 
 /** A request leaves PENDING once, so its id identifies the response. */
-export function leaveRequestRespondedEmail({ leaveRequestId, status }) {
+export function leaveRequestRespondedEmail({
+  ownerAccountId,
+  leaveRequestId,
+  status,
+}) {
   return {
     type: EMAIL_TYPES.LEAVE_REQUEST_RESPONDED,
     key: key("leave-request-responded", leaveRequestId),
+    ownerAccountId,
     data: { leaveRequestId, status },
   };
 }
 
 // Notice can be given, withdrawn and given again with the same date, so these are keyed by
 // the activity log entry the event wrote.
-export function noticeGivenEmail({ activityLogId, tenantAssignmentId, plannedExitDate }) {
+export function noticeGivenEmail({
+  ownerAccountId,
+  activityLogId,
+  tenantAssignmentId,
+  plannedExitDate,
+}) {
   return {
     type: EMAIL_TYPES.NOTICE_GIVEN,
     key: key("notice-given", activityLogId),
+    ownerAccountId,
     data: { tenantAssignmentId, plannedExitDate },
   };
 }
 
-export function noticeWithdrawnEmail({ activityLogId, tenantAssignmentId }) {
+export function noticeWithdrawnEmail({
+  ownerAccountId,
+  activityLogId,
+  tenantAssignmentId,
+}) {
   return {
     type: EMAIL_TYPES.NOTICE_WITHDRAWN,
     key: key("notice-withdrawn", activityLogId),
+    ownerAccountId,
     data: { tenantAssignmentId },
   };
 }
@@ -80,6 +108,7 @@ export function trialEndingEmail({ stripeEventId, ownerAccountId, trialEnd }) {
   return {
     type: EMAIL_TYPES.TRIAL_ENDING,
     key: key("trial-ending", stripeEventId),
+    ownerAccountId,
     data: { ownerAccountId, trialEnd },
   };
 }
@@ -88,6 +117,7 @@ export function paymentFailedEmail({ stripeEventId, ownerAccountId }) {
   return {
     type: EMAIL_TYPES.PAYMENT_FAILED,
     key: key("payment-failed", stripeEventId),
+    ownerAccountId,
     data: { ownerAccountId },
   };
 }
@@ -96,15 +126,26 @@ export function paymentFailedEmail({ stripeEventId, ownerAccountId }) {
 export function accountReadOnlyEmail({ ownerAccountId, readOnlySince }) {
   return {
     type: EMAIL_TYPES.ACCOUNT_READ_ONLY,
-    key: key("account-read-only", ownerAccountId, String(readOnlySince.getTime())),
+    key: key(
+      "account-read-only",
+      ownerAccountId,
+      String(readOnlySince.getTime()),
+    ),
+    ownerAccountId,
     data: { ownerAccountId },
   };
 }
 
-export function deletionScheduledEmail({ activityLogId, ownerAccountId, deletionScheduledAt, reason }) {
+export function deletionScheduledEmail({
+  activityLogId,
+  ownerAccountId,
+  deletionScheduledAt,
+  reason,
+}) {
   return {
     type: EMAIL_TYPES.DELETION_SCHEDULED,
     key: key("deletion-scheduled", activityLogId),
+    ownerAccountId,
     data: { ownerAccountId, deletionScheduledAt, reason },
   };
 }

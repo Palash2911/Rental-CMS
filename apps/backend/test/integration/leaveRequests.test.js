@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
 
 import { Prisma } from "../../src/generated/prisma/client.ts";
+import { MAX_LEAVE_REQUESTS_PER_DAY } from "../../src/graphql/leaveRequest/serviceLeaveRequest.js";
 import { READ_ONLY_MESSAGE } from "../../src/lib/entitlement.js";
 import { prisma, resetDatabase } from "../support/db.js";
 import {
@@ -117,6 +118,29 @@ describe("createLeaveRequest", () => {
     assert.deepEqual([log.entityType, log.action, log.performedByUserId], ["LeaveRequest", "CREATED", tenant.id]);
     assert.deepEqual(log.metadata, { tenantAssignmentId: assignment.id, requestedExitDate });
     assert.equal((await storedAssignment(assignment)).status, "ACTIVE");
+  });
+
+  it(`allows ${MAX_LEAVE_REQUESTS_PER_DAY} requests per assignment in 24 hours, withdrawn ones included, then CONFLICT`, async () => {
+    const { tenant, assignment } = await lease();
+    const other = await lease();
+
+    for (let index = 0; index < MAX_LEAVE_REQUESTS_PER_DAY; index += 1) {
+      const created = expectData(await run(as(tenant), CREATE, createInput(assignment))).createLeaveRequest;
+      expectData(await run(as(tenant), WITHDRAW, { id: created.id }));
+    }
+
+    expectError(
+      await run(as(tenant), CREATE, createInput(assignment)),
+      "CONFLICT",
+      `A tenant assignment can have at most ${MAX_LEAVE_REQUESTS_PER_DAY} leave requests in 24 hours. Try again later.`,
+    );
+    expectData(await run(as(other.tenant), CREATE, createInput(other.assignment)));
+
+    await prisma.leaveRequest.updateMany({
+      where: { tenantAssignmentId: assignment.id },
+      data: { createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000) },
+    });
+    expectData(await run(as(tenant), CREATE, createInput(assignment)));
   });
 
   it("accepts today and a missing reason", async () => {

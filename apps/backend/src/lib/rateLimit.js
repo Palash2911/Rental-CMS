@@ -22,6 +22,8 @@ export const SENSITIVE_MUTATIONS = Object.freeze([
   "startCheckout",
   "openBillingPortal",
   "requestReceiptUpload",
+  // Each request emails every owner of the account.
+  "createLeaveRequest",
 ]);
 
 /** Queries that return a whole data set in one response; they share the sensitive bucket. */

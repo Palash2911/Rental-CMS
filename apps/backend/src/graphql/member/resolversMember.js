@@ -33,6 +33,19 @@ const PRIMARY_WRITE = Object.freeze({
   statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE,
 });
 
+// Each invitation emails an outside address, so only an APPROVED account with full access
+// (not a free PENDING one) may send them.
+const PRIMARY_INVITE = Object.freeze({
+  roles: ROLES.PRIMARY_ONLY,
+  statuses: ACCOUNT_STATUSES.MEMBER_INVITE,
+});
+
+const PRIMARY_REMOVE = Object.freeze({
+  roles: ROLES.PRIMARY_ONLY,
+  statuses: ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE,
+  allowReadOnly: true,
+});
+
 // A co-owner can always leave, even while billing has made the account read-only, the same
 // as scheduling or cancelling the account's deletion.
 const ANY_MEMBER_LEAVE = Object.freeze({
@@ -67,7 +80,7 @@ export const memberResolvers = {
 
   Mutation: {
     createMemberInvitation: async (_parent, args, context) => {
-      const { user } = await requireOwnerMember(context, args.ownerAccountId, PRIMARY_WRITE);
+      const { user } = await requireOwnerMember(context, args.ownerAccountId, PRIMARY_INVITE);
       const input = validate(createMemberInvitationSchema, args);
       return memberService.createMemberInvitation(context, { ...input, actorId: user.id });
     },
@@ -103,7 +116,7 @@ export const memberResolvers = {
     },
 
     removeMember: async (_parent, args, context) => {
-      const { user } = await requireOwnerMember(context, args.ownerAccountId, PRIMARY_WRITE);
+      const { user } = await requireOwnerMember(context, args.ownerAccountId, PRIMARY_REMOVE);
       const input = validate(removeMemberSchema, args);
       return memberService.removeMember(context, { ...input, actorId: user.id });
     },

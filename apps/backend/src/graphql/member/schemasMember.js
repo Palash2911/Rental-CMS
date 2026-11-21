@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { InvitationStatus } from "../../generated/prisma/enums.ts";
 import { paginationFields } from "../../lib/pagination.js";
-import { cuidIdSchema, userIdSchema } from "../../lib/validate.js";
+import { cuidIdSchema } from "../../lib/validate.js";
 import { normalisedEmailSchema } from "../invitation/schemasInvitation.js";
 
 export const ownerAccountIdSchema = z.object({ ownerAccountId: cuidIdSchema });
@@ -16,12 +16,12 @@ export const createMemberInvitationSchema = z.object({
 
 export const removeMemberSchema = z.object({
   ownerAccountId: cuidIdSchema,
-  userId: userIdSchema,
+  memberId: cuidIdSchema,
 });
 
 export const transferOwnershipSchema = z.object({
   ownerAccountId: cuidIdSchema,
-  newPrimaryUserId: userIdSchema,
+  newPrimaryMemberId: cuidIdSchema,
 });
 
 export const membersByAccountSchema = z.object({

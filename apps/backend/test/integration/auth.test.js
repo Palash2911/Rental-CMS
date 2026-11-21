@@ -78,6 +78,19 @@ describe("user sync on sign-in", () => {
     assert.equal(expectData(await run(contextFor(user, { name: null }), ME)).me.name, "New Name");
   });
 
+  it("trims display names, collapses whitespace and control characters, and caps them at 100 characters", async () => {
+    const created = expectData(
+      await run(tokenContext({ userId: firebaseUid(), email: uniqueEmail(), name: `  Ana\r\n\tLopez${"x".repeat(200)}  ` }), ME),
+    ).me;
+
+    assert.equal(created.name, `Ana Lopez${"x".repeat(91)}`);
+    assert.equal(created.name.length, 100);
+
+    const user = await createUser({ name: "Kept" });
+    assert.equal(expectData(await run(contextFor(user, { name: " \u0000 \t " }), ME)).me.name, "Kept");
+    assert.equal(expectData(await run(contextFor(user, { name: "  New\nName  " }), ME)).me.name, "New Name");
+  });
+
   it("gives CONFLICT when a new User's email belongs to another User", async () => {
     const existing = await createUser();
     const result = await run(tokenContext({ userId: firebaseUid(), email: existing.email }), ME);

@@ -14,9 +14,9 @@ import { race, run } from "../support/graphql.js";
 const ROUNDS = 5;
 const MAX_MEMBERS = 10;
 const ACCEPT = `mutation ($id: ID!) { acceptMemberInvitation(id: $id) { id } }`;
-const REMOVE = `mutation ($ownerAccountId: ID!, $userId: ID!) { removeMember(ownerAccountId: $ownerAccountId, userId: $userId) { id } }`;
-const TRANSFER = `mutation ($ownerAccountId: ID!, $newPrimaryUserId: ID!) {
-  transferOwnership(ownerAccountId: $ownerAccountId, newPrimaryUserId: $newPrimaryUserId) { newPrimary { userId } } }`;
+const REMOVE = `mutation ($ownerAccountId: ID!, $memberId: ID!) { removeMember(ownerAccountId: $ownerAccountId, memberId: $memberId) { id } }`;
+const TRANSFER = `mutation ($ownerAccountId: ID!, $newPrimaryMemberId: ID!) {
+  transferOwnership(ownerAccountId: $ownerAccountId, newPrimaryMemberId: $newPrimaryMemberId) { newPrimary { id } } }`;
 const CREATE_ACCOUNT = `mutation ($name: String!) { createOwnerAccount(name: $name) { id } }`;
 
 const MESSAGES = Object.freeze({
@@ -85,11 +85,11 @@ describe("transferOwnership racing removeMember", () => {
     for (let round = 0; round < ROUNDS; round += 1) {
       const [owner, coOwner] = await Promise.all([createUser(), createUser()]);
       const account = await createOwnerAccount(owner);
-      await addMember(account, coOwner);
+      const membership = await addMember(account, coOwner);
 
       const [transfer, removal] = await race([
-        () => run(contextFor(owner), TRANSFER, { ownerAccountId: account.id, newPrimaryUserId: coOwner.id }),
-        () => run(contextFor(owner), REMOVE, { ownerAccountId: account.id, userId: coOwner.id }),
+        () => run(contextFor(owner), TRANSFER, { ownerAccountId: account.id, newPrimaryMemberId: membership.id }),
+        () => run(contextFor(owner), REMOVE, { ownerAccountId: account.id, memberId: membership.id }),
       ]);
 
       assert.equal(Number(transfer.ok) + Number(removal.ok), 1, `round ${round}`);
@@ -114,13 +114,13 @@ describe("two concurrent transferOwnership calls", () => {
     for (let round = 0; round < ROUNDS; round += 1) {
       const [owner, first, second] = await Promise.all([createUser(), createUser(), createUser()]);
       const account = await createOwnerAccount(owner);
-      await addMember(account, first);
-      await addMember(account, second);
+      const memberships = [await addMember(account, first), await addMember(account, second)];
 
-      const outcomes = await race([
-        () => run(contextFor(owner), TRANSFER, { ownerAccountId: account.id, newPrimaryUserId: first.id }),
-        () => run(contextFor(owner), TRANSFER, { ownerAccountId: account.id, newPrimaryUserId: second.id }),
-      ]);
+      const outcomes = await race(
+        memberships.map((membership) => () =>
+          run(contextFor(owner), TRANSFER, { ownerAccountId: account.id, newPrimaryMemberId: membership.id }),
+        ),
+      );
 
       assert.equal(outcomes.filter((outcome) => outcome.ok).length, 1, `round ${round}`);
       assert.deepEqual(
@@ -128,7 +128,8 @@ describe("two concurrent transferOwnership calls", () => {
         [{ ok: false, code: "FORBIDDEN", message: MESSAGES.ROLE_NOT_ALLOWED }],
       );
 
-      const winner = outcomes.find((outcome) => outcome.ok).data.transferOwnership.newPrimary.userId;
+      const winnerMemberId = outcomes.find((outcome) => outcome.ok).data.transferOwnership.newPrimary.id;
+      const winner = memberships.find((membership) => membership.id === winnerMemberId).userId;
       assert.deepEqual(await primariesOf(account), [{ userId: winner }]);
       assert.equal((await membershipOf(account, owner)).role, "CO_OWNER");
       assert.equal(await prisma.activityLog.count({ where: { entityId: account.id, action: "OWNERSHIP_TRANSFERRED" } }), 1);
@@ -141,14 +142,14 @@ describe("transferOwnership racing the new PRIMARY's createOwnerAccount", () => 
     for (let round = 0; round < ROUNDS; round += 1) {
       const [owner, coOwner] = await Promise.all([createUser(), createUser()]);
       const account = await createOwnerAccount(owner);
-      await addMember(account, coOwner);
+      const membership = await addMember(account, coOwner);
 
       for (let index = 0; index < 4; index += 1) {
         await createOwnerAccount(coOwner);
       }
 
       const [transfer, create] = await race([
-        () => run(contextFor(owner), TRANSFER, { ownerAccountId: account.id, newPrimaryUserId: coOwner.id }),
+        () => run(contextFor(owner), TRANSFER, { ownerAccountId: account.id, newPrimaryMemberId: membership.id }),
         () => run(contextFor(coOwner), CREATE_ACCOUNT, { name: "Fifth Rentals" }),
       ]);
 

@@ -89,7 +89,6 @@ function isExpired(invitation, now) {
 export function toPublicMember(member) {
   return {
     id: member.id,
-    userId: member.userId,
     name: member.user.name,
     email: member.user.email,
     role: member.role,
@@ -168,14 +167,18 @@ export function listMyMemberInvitations(context, { actorEmail, first, after }) {
  * schedule or webhook that committed after the guard is therefore always seen.
  */
 // `allowReadOnly` skips the billing check, matching the guard option of the same name.
-async function lockWritableAccount(tx, ownerAccountId, { allowReadOnly = false } = {}) {
+async function lockWritableAccount(
+  tx,
+  ownerAccountId,
+  { allowReadOnly = false, statuses = ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE } = {},
+) {
   const account = await lockOwnerAccount(tx, ownerAccountId);
 
   if (!account) {
     throw new NotFoundError(MESSAGES.OWNER_ACCOUNT_NOT_FOUND);
   }
 
-  if (!ACCOUNT_STATUSES.MEMBER_ACCOUNT_WRITE.includes(account.status)) {
+  if (!statuses.includes(account.status)) {
     throw new ForbiddenError(MESSAGES.STATUS_NOT_ALLOWED);
   }
 
@@ -198,6 +201,16 @@ function findMembership(tx, ownerAccountId, userId) {
     where: { userId_ownerAccountId: { userId, ownerAccountId } },
     select: MEMBER_SELECT,
   });
+}
+
+// A membership id from another account is reported as missing, like one that never existed.
+async function findMembershipById(tx, ownerAccountId, memberId) {
+  const member = await tx.ownerAccountMember.findUnique({
+    where: { id: memberId },
+    select: { ...MEMBER_SELECT, ownerAccountId: true },
+  });
+
+  return member?.ownerAccountId === ownerAccountId ? member : null;
 }
 
 // The guard read the actor's role before the account lock; a transfer that committed since
@@ -297,7 +310,7 @@ async function insertInvitation(tx, data) {
  */
 export function createMemberInvitation(context, { actorId, ownerAccountId, email }) {
   return withEmails(context.notifier, (emails) => context.prisma.$transaction(async (tx) => {
-    await lockWritableAccount(tx, ownerAccountId);
+    await lockWritableAccount(tx, ownerAccountId, { statuses: ACCOUNT_STATUSES.MEMBER_INVITE });
     await assertStillPrimary(tx, ownerAccountId, actorId);
     await assertNotMemberEmail(tx, ownerAccountId, email);
     await assertMemberCapacity(tx, ownerAccountId);
@@ -323,7 +336,7 @@ export function createMemberInvitation(context, { actorId, ownerAccountId, email
       metadata: { ownerAccountId, expiresAt: invitation.expiresAt.toISOString() },
     });
 
-    emails.push(memberInvitationEmail({ memberInvitationId: invitation.id }));
+    emails.push(memberInvitationEmail({ ownerAccountId, memberInvitationId: invitation.id }));
 
     return toPublicMemberInvitation(invitation, now);
   }));
@@ -521,12 +534,14 @@ async function deleteMember(tx, { member, ownerAccountId, actorId, action }) {
  * Returns the removed member. Throws NotFoundError for a non-member and ForbiddenError for
  * the PRIMARY member or an account that does not allow member writes.
  */
-export function removeMember(context, { actorId, ownerAccountId, userId }) {
+// Allowed on a read-only account (project owner, like leaveAccount): removing a co-owner
+// must not depend on paying.
+export function removeMember(context, { actorId, ownerAccountId, memberId }) {
   return context.prisma.$transaction(async (tx) => {
-    await lockWritableAccount(tx, ownerAccountId);
+    await lockWritableAccount(tx, ownerAccountId, { allowReadOnly: true });
     await assertStillPrimary(tx, ownerAccountId, actorId);
 
-    const member = await findMembership(tx, ownerAccountId, userId);
+    const member = await findMembershipById(tx, ownerAccountId, memberId);
 
     if (!member) {
       throw new NotFoundError(MESSAGES.MEMBER_NOT_FOUND);
@@ -680,11 +695,11 @@ async function recordCustomerEmailSyncFailure(context, { actorId, ...metadata })
  * transfer to oneself or a target at MAX_PRIMARY_ACCOUNTS.
  */
 // After the commit, updates the Stripe customer's email (see syncCustomerEmail).
-export async function transferOwnership(context, { actorId, ownerAccountId, newPrimaryUserId }) {
+export async function transferOwnership(context, { actorId, ownerAccountId, newPrimaryMemberId }) {
   const transfer = await commitOwnershipTransfer(context, {
     actorId,
     ownerAccountId,
-    newPrimaryUserId,
+    newPrimaryMemberId,
   });
 
   await syncCustomerEmail(context, { ownerAccountId, actorId });
@@ -692,21 +707,22 @@ export async function transferOwnership(context, { actorId, ownerAccountId, newP
   return transfer;
 }
 
-function commitOwnershipTransfer(context, { actorId, ownerAccountId, newPrimaryUserId }) {
+function commitOwnershipTransfer(context, { actorId, ownerAccountId, newPrimaryMemberId }) {
   return context.prisma.$transaction(async (tx) => {
     await lockWritableAccount(tx, ownerAccountId);
     const previous = await assertStillPrimary(tx, ownerAccountId, actorId);
 
-    if (newPrimaryUserId === actorId) {
-      throw new ConflictError(MESSAGES.ALREADY_PRIMARY);
-    }
-
-    const next = await findMembership(tx, ownerAccountId, newPrimaryUserId);
+    const next = await findMembershipById(tx, ownerAccountId, newPrimaryMemberId);
 
     if (!next) {
       throw new NotFoundError(MESSAGES.MEMBER_NOT_FOUND);
     }
 
+    if (next.userId === actorId) {
+      throw new ConflictError(MESSAGES.ALREADY_PRIMARY);
+    }
+
+    const newPrimaryUserId = next.userId;
     await assertBelowPrimaryLimit(tx, newPrimaryUserId);
 
     const { previousPrimary, newPrimary } = await swapRoles(tx, { previous, next });

@@ -54,6 +54,17 @@ describe("storage gateway presigning", () => {
     assert.equal(new URL(url).searchParams.get("X-Amz-Expires"), "300");
     assert.deepEqual(signedHeaders(url), ["host"]);
   });
+
+  it("signs a download as an attachment named after the key, so it never opens inline", async () => {
+    const url = await gateway().presignDownload({ key: KEY, expiresInSeconds: 300 });
+    const odd = await gateway().presignDownload({ key: 'receipts/a/b/evil"name.pdf', expiresInSeconds: 300 });
+
+    assert.equal(
+      new URL(url).searchParams.get("response-content-disposition"),
+      'attachment; filename="0f8fad5b-d9cb-469f-a165-70867728950e.pdf"',
+    );
+    assert.equal(new URL(odd).searchParams.get("response-content-disposition"), 'attachment; filename="receipt"');
+  });
 });
 
 describe("storage gateway deleteObjects", () => {

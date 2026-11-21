@@ -1,3 +1,5 @@
+import { tenantInvitationEmail } from "../../email/events.js";
+import { withEmails } from "../../email/queue.js";
 import {
   HouseStatus,
   InvitationStatus,
@@ -22,8 +24,6 @@ import {
   isUniqueViolation,
   NotFoundError,
 } from "../../lib/errors.js";
-import { tenantInvitationEmail } from "../../email/events.js";
-import { withEmails } from "../../email/queue.js";
 import { buildPageQuery, toPage } from "../../lib/pagination.js";
 import {
   ACTIVE_ASSIGNMENT_STATUSES,
@@ -59,8 +59,10 @@ const INVITATION_SELECT = Object.freeze({
 const MESSAGES = Object.freeze({
   NOT_FOUND: "Invitation not found.",
   HOUSE_INACTIVE: "This house is inactive and cannot take new tenants.",
-  ALREADY_TENANT: "This email address already has an active tenancy on this house.",
-  ALREADY_INVITED: "This email address already has a pending invitation for this house.",
+  ALREADY_TENANT:
+    "This email address already has an active tenancy on this house.",
+  ALREADY_INVITED:
+    "This email address already has a pending invitation for this house.",
   PENDING_LIMIT: `A house can have at most ${MAX_PENDING_INVITATIONS_PER_HOUSE} pending invitations.`,
   NOT_PENDING: "This invitation is no longer pending.",
   EXPIRED: "This invitation has expired.",
@@ -127,7 +129,10 @@ async function listPage(prisma, filter, { first, after }) {
 }
 
 /** Lists a house's invitations, optionally filtered by stored status, newest first. */
-export function listInvitationsByHouse(context, { houseId, status, first, after }) {
+export function listInvitationsByHouse(
+  context,
+  { houseId, status, first, after },
+) {
   const filter = status ? { houseId, status } : { houseId };
   return listPage(context.prisma, filter, { first, after });
 }
@@ -165,7 +170,9 @@ async function assertHouseAcceptsTenants(tx, houseId) {
 async function assertNotActiveTenant(tx, houseId, email) {
   const active = await tx.tenantAssignment.findMany({
     where: { houseId, status: { in: ACTIVE_ASSIGNMENT_STATUSES } },
-    select: { tenantProfile: { select: { user: { select: { email: true } } } } },
+    select: {
+      tenantProfile: { select: { user: { select: { email: true } } } },
+    },
   });
 
   const isTenant = active.some(
@@ -177,7 +184,10 @@ async function assertNotActiveTenant(tx, houseId, email) {
   }
 }
 
-async function supersedeExpiredInvitation(tx, { houseId, ownerAccountId, email, actorId, now }) {
+async function supersedeExpiredInvitation(
+  tx,
+  { houseId, ownerAccountId, email, actorId, now },
+) {
   const pending = await tx.invitation.findFirst({
     where: { houseId, email, status: InvitationStatus.PENDING },
     select: { id: true, expiresAt: true, status: true },
@@ -247,45 +257,55 @@ export function createInvitation(
   context,
   { actorId, ownerAccountId, houseId, email, leaseStartDate, leaseEndDate },
 ) {
-  return withEmails(context.notifier, (emails) => context.prisma.$transaction(async (tx) => {
-    await lockHouse(tx, houseId);
-    await assertHouseAcceptsTenants(tx, houseId);
-    await assertNotActiveTenant(tx, houseId, email);
+  return withEmails(context.notifier, (emails) =>
+    context.prisma.$transaction(async (tx) => {
+      await lockHouse(tx, houseId);
+      await assertHouseAcceptsTenants(tx, houseId);
+      await assertNotActiveTenant(tx, houseId, email);
 
-    const now = new Date();
-    await supersedeExpiredInvitation(tx, { houseId, ownerAccountId, email, actorId, now });
-    await assertPendingCapacity(tx, houseId, now);
-
-    const invitation = await insertInvitation(tx, {
-      houseId,
-      email,
-      invitedByUserId: actorId,
-      leaseStartDate,
-      leaseEndDate: leaseEndDate ?? null,
-      status: InvitationStatus.PENDING,
-      expiresAt: expiryDate(now),
-    });
-
-    await logActivity(tx, {
-      entityType: ENTITY_TYPES.INVITATION,
-      entityId: invitation.id,
-      action: ACTIVITY_ACTIONS.CREATED,
-      ownerAccountId,
-      performedByUserId: actorId,
-      metadata: {
+      const now = new Date();
+      await supersedeExpiredInvitation(tx, {
         houseId,
-        leaseStartDate: toCalendarDate(invitation.leaseStartDate),
-        leaseEndDate: invitation.leaseEndDate
-          ? toCalendarDate(invitation.leaseEndDate)
-          : null,
-        expiresAt: invitation.expiresAt.toISOString(),
-      },
-    });
+        ownerAccountId,
+        email,
+        actorId,
+        now,
+      });
+      await assertPendingCapacity(tx, houseId, now);
 
-    emails.push(tenantInvitationEmail({ invitationId: invitation.id }));
+      const invitation = await insertInvitation(tx, {
+        houseId,
+        email,
+        invitedByUserId: actorId,
+        leaseStartDate,
+        leaseEndDate: leaseEndDate ?? null,
+        status: InvitationStatus.PENDING,
+        expiresAt: expiryDate(now),
+      });
 
-    return toPublicInvitation(invitation, now);
-  }));
+      await logActivity(tx, {
+        entityType: ENTITY_TYPES.INVITATION,
+        entityId: invitation.id,
+        action: ACTIVITY_ACTIONS.CREATED,
+        ownerAccountId,
+        performedByUserId: actorId,
+        metadata: {
+          houseId,
+          leaseStartDate: toCalendarDate(invitation.leaseStartDate),
+          leaseEndDate: invitation.leaseEndDate
+            ? toCalendarDate(invitation.leaseEndDate)
+            : null,
+          expiresAt: invitation.expiresAt.toISOString(),
+        },
+      });
+
+      emails.push(
+        tenantInvitationEmail({ ownerAccountId, invitationId: invitation.id }),
+      );
+
+      return toPublicInvitation(invitation, now);
+    }),
+  );
 }
 
 function assertRespondable(invitation, now) {
@@ -337,7 +357,10 @@ function logResponse(tx, { invitation, action, actorId, ownerAccountId }) {
  * Moves a PENDING, unexpired invitation to REVOKED. `invitation` is the row the guard read.
  * Throws ConflictError when it is no longer pending or has expired.
  */
-export function revokeInvitation(context, { actorId, ownerAccountId, invitation: current }) {
+export function revokeInvitation(
+  context,
+  { actorId, ownerAccountId, invitation: current },
+) {
   const now = new Date();
   assertRespondable(current, now);
 
@@ -364,7 +387,12 @@ export function revokeInvitation(context, { actorId, ownerAccountId, invitation:
 async function findInviteeInvitation(tx, id, actorEmail) {
   const invitation = await tx.invitation.findUnique({
     where: { id },
-    select: { id: true, houseId: true, email: true, house: { select: { ownerAccountId: true } } },
+    select: {
+      id: true,
+      houseId: true,
+      email: true,
+      house: { select: { ownerAccountId: true } },
+    },
   });
 
   if (!invitation || invitation.email !== normaliseEmail(actorEmail)) {
@@ -439,7 +467,10 @@ async function loadAcceptTarget(tx, id) {
           maxTenants: true,
           ownerAccountId: true,
           ownerAccount: {
-            select: { status: true, subscription: { select: ENTITLEMENT_FIELDS } },
+            select: {
+              status: true,
+              subscription: { select: ENTITLEMENT_FIELDS },
+            },
           },
         },
       },
@@ -525,7 +556,10 @@ async function assertCanJoin(tx, { house, tenantProfileId, entitlement }) {
 
 async function insertAssignment(tx, data) {
   try {
-    return await tx.tenantAssignment.create({ data, select: ASSIGNMENT_SELECT });
+    return await tx.tenantAssignment.create({
+      data,
+      select: ASSIGNMENT_SELECT,
+    });
   } catch (error) {
     if (isUniqueViolation(error)) {
       throw new ConflictError(MESSAGES.ALREADY_ASSIGNED);
@@ -535,7 +569,10 @@ async function insertAssignment(tx, data) {
   }
 }
 
-async function logAcceptance(tx, { actorId, ownerAccountId, invitation, assignment, profile }) {
+async function logAcceptance(
+  tx,
+  { actorId, ownerAccountId, invitation, assignment, profile },
+) {
   await logResponse(tx, {
     invitation,
     action: ACTIVITY_ACTIONS.ACCEPTED,

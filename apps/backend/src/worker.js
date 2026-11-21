@@ -7,7 +7,7 @@ import { createEmailNotifier, EMAIL_QUEUE } from "./email/queue.js";
 import { createJobProcessor, MAINTENANCE_QUEUE, registerJobSchedulers } from "./jobs/scheduler.js";
 import { config } from "./lib/config.js";
 import prisma from "./prisma.js";
-import { closeRedisClient, createWorkerRedisClient } from "./redis.js";
+import { closeRedisClient, createRedisClient, createWorkerRedisClient } from "./redis.js";
 import { createStorageClient, createStorageGateway } from "./storage/gateway.js";
 import { createStripeClient, createStripeGateway } from "./stripe/gateway.js";
 
@@ -29,8 +29,14 @@ const storageGateway = createStorageGateway(createStorageClient(config.s3), {
 });
 
 const emailGateway = createEmailGateway(createEmailClient(config.email.resendApiKey));
-const emailQueue = new Queue(EMAIL_QUEUE, { connection });
-const notifier = createEmailNotifier(emailQueue, log);
+// Jobs enqueue emails like the API does: on a fail-fast client (no offline queue), which also
+// carries the rateLimitHit command the daily email budget counts with. The blocking worker
+// connection above retries forever and has neither.
+const producerRedis = createRedisClient(config.redisUrl, {
+  onError: (error) => log.warn({ err: error }, "Redis connection error."),
+});
+const emailQueue = new Queue(EMAIL_QUEUE, { connection: producerRedis });
+const notifier = createEmailNotifier({ queue: emailQueue, redis: producerRedis, log });
 
 const queue = new Queue(MAINTENANCE_QUEUE, { connection });
 await registerJobSchedulers(queue);
@@ -58,7 +64,7 @@ const emailWorker = new Worker(
     devRedirect: config.email.devRedirect,
     frontendUrl: config.frontendUrl,
     log,
-    rateLimit: (ms) => emailWorker.rateLimit(ms),
+    rateLimit: (ms) => emailQueue.rateLimit(ms),
   }),
   { connection, concurrency: WORKER_CONCURRENCY, limiter: EMAIL_RATE },
 );
@@ -77,7 +83,7 @@ async function shutdown(signal) {
 
   await Promise.all([worker.close(), emailWorker.close()]);
   await Promise.all([queue.close(), emailQueue.close()]);
-  await Promise.all([prisma.$disconnect(), closeRedisClient(connection)]);
+  await Promise.all([prisma.$disconnect(), closeRedisClient(connection), closeRedisClient(producerRedis)]);
   process.exit(0);
 }
 

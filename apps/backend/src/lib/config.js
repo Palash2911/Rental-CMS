@@ -13,6 +13,7 @@ const POSTGRES_PROTOCOL = /^postgres(ql)?$/;
 const HTTP_PROTOCOL = /^https?$/;
 const STRIPE_SECRET_KEY_PATTERN = /^(sk|rk)_(test|live)_\S+$/;
 const STRIPE_LIVE_KEY_PATTERN = /^(sk|rk)_live_/;
+const STRIPE_TEST_KEY_PATTERN = /^(sk|rk)_test_/;
 const STRIPE_WEBHOOK_SECRET_PATTERN = /^whsec_\S+$/;
 const REDIS_PROTOCOL = /^rediss?$/;
 const BOOLEAN_FLAGS = Object.freeze({ TRUE: "true", FALSE: "false" });
@@ -180,6 +181,15 @@ function stripeKeyProblems(rawEnv) {
     return [
       "STRIPE_SECRET_KEY must be a test-mode key unless NODE_ENV is production",
     ];
+  }
+
+  // The reverse: with a test key in production, Stripe test cards would buy real access.
+  if (
+    typeof key === "string" &&
+    STRIPE_TEST_KEY_PATTERN.test(key) &&
+    rawEnv.NODE_ENV === NODE_ENVS.PRODUCTION
+  ) {
+    return ["STRIPE_SECRET_KEY must be a live-mode key when NODE_ENV is production"];
   }
 
   return [];

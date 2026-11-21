@@ -92,6 +92,29 @@ async function stillEligible(tx, ownerAccountId, cutoff) {
   return { status: account.status, readOnlySince };
 }
 
+// Project owner: cancelling a billing-grace deletion while still read-only must not buy
+// another 30 days. Every scheduling for the same lapse logs the same readOnlySince (it only
+// resets once access returns), so the first one's date is reused; a new lapse gets a new date.
+// Returns null when this lapse was never scheduled.
+async function originalDeletionDate(tx, ownerAccountId, readOnlySince) {
+  const first = await tx.activityLog.findFirst({
+    where: {
+      entityType: ENTITY_TYPES.OWNER_ACCOUNT,
+      entityId: ownerAccountId,
+      action: ACTIVITY_ACTIONS.DELETION_SCHEDULED,
+      AND: [
+        { metadata: { path: ["reason"], equals: BILLING_GRACE_REASON } },
+        { metadata: { path: ["readOnlySince"], equals: readOnlySince.toISOString() } },
+      ],
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { metadata: true },
+  });
+
+  const original = first?.metadata?.deletionScheduledAt;
+  return original ? new Date(original) : null;
+}
+
 function scheduleDeletion(prisma, notifier, { cutoff, now }) {
   return (ownerAccountId) =>
     withEmails(notifier, (emails) => prisma.$transaction(async (tx) => {
@@ -101,7 +124,9 @@ function scheduleDeletion(prisma, notifier, { cutoff, now }) {
         return OUTCOMES.SKIPPED;
       }
 
-      const deletionScheduledAt = daysAfter(now, DELETION_GRACE_DAYS);
+      const deletionScheduledAt =
+        (await originalDeletionDate(tx, ownerAccountId, eligible.readOnlySince)) ??
+        daysAfter(now, DELETION_GRACE_DAYS);
 
       await tx.ownerAccount.update({
         where: { id: ownerAccountId, status: eligible.status },

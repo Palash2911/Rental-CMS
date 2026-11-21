@@ -20,15 +20,61 @@ export const EMAIL_JOB_OPTIONS = Object.freeze({
 // a request for as long as Redis is down.
 const ENQUEUE_TIMEOUT_MS = 1000;
 
+/**
+ * Most emails one owner account may trigger per UTC day. Past it emails are dropped (and
+ * logged), so one account cannot use up the sending quota every other account depends on.
+ */
+export const DAILY_EMAIL_BUDGET_PER_ACCOUNT = 20;
+
+const BUDGET_KEY_PREFIX = "email-budget";
+// One key per account per UTC day; it outlives its day by an hour, then expires.
+const BUDGET_WINDOW_MS = 25 * 60 * 60 * 1000;
+const ISO_DATE_LENGTH = 10;
+
 const MESSAGES = Object.freeze({
-  ENQUEUE_FAILED: "Email not queued: Redis is unavailable. The email is lost (no outbox yet).",
+  ENQUEUE_FAILED:
+    "Email not queued: Redis is unavailable. The email is lost (no outbox yet).",
+  OVER_BUDGET:
+    "Email dropped: the owner account has used its daily email budget.",
+  NO_ACCOUNT: "Email dropped: it names no owner account to charge.",
+  BUDGET_SKIPPED:
+    "Email budget not checked: Redis is unavailable. The email is queued anyway.",
 });
+
+function budgetKey(ownerAccountId, now) {
+  return `${BUDGET_KEY_PREFIX}:${ownerAccountId}:${now.toISOString().slice(0, ISO_DATE_LENGTH)}`;
+}
+
+// Fails open like the rate limit: with Redis down the budget cannot be counted, and the
+// enqueue right after would fail too, so nothing extra gets through.
+async function withinBudget({ redis, log, email, now }) {
+  try {
+    const [count] = await withTimeout(
+      redis.rateLimitHit(
+        budgetKey(email.ownerAccountId, now),
+        1,
+        BUDGET_WINDOW_MS,
+      ),
+      ENQUEUE_TIMEOUT_MS,
+    );
+    return count <= DAILY_EMAIL_BUDGET_PER_ACCOUNT;
+  } catch (error) {
+    log.warn(
+      { err: error, emailType: email.type, emailKey: email.key },
+      MESSAGES.BUDGET_SKIPPED,
+    );
+    return true;
+  }
+}
 
 function withTimeout(promise, timeoutMs) {
   let timer;
 
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs} ms`)), timeoutMs);
+    timer = setTimeout(
+      () => reject(new Error(`Timed out after ${timeoutMs} ms`)),
+      timeoutMs,
+    );
   });
 
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
@@ -36,20 +82,49 @@ function withTimeout(promise, timeoutMs) {
 
 /**
  * Wraps a BullMQ queue as the notifier the API, the webhook and the jobs use. `enqueue`
- * adds each `{ type, key, data }` (job id = key) and never throws: a failure is logged at
- * `warn` with the type and key only, and the caller's write stands (project owner, option A).
+ * charges each `{ type, key, ownerAccountId, data }` to its account's daily budget
+ * (`redis` must have `rateLimitHit`), then adds it (job id = key). It never throws: a
+ * failure or a dropped email is logged at `warn` with the type and key only, and the
+ * caller's write stands (project owner, option A).
  */
-export function createEmailNotifier(queue, log) {
+export function createEmailNotifier({
+  queue,
+  redis,
+  log,
+  now = () => new Date(),
+}) {
   return Object.freeze({
     async enqueue(emails) {
       for (const email of emails) {
+        const context = {
+          emailType: email.type,
+          emailKey: email.key,
+          ownerAccountId: email.ownerAccountId,
+        };
+
+        if (!email.ownerAccountId) {
+          log.error(context, MESSAGES.NO_ACCOUNT);
+          continue;
+        }
+
+        if (!(await withinBudget({ redis, log, email, now: now() }))) {
+          log.warn(context, MESSAGES.OVER_BUDGET);
+          continue;
+        }
+
         try {
           await withTimeout(
-            queue.add(email.type, email.data, { ...EMAIL_JOB_OPTIONS, jobId: email.key }),
+            queue.add(email.type, email.data, {
+              ...EMAIL_JOB_OPTIONS,
+              jobId: email.key,
+            }),
             ENQUEUE_TIMEOUT_MS,
           );
         } catch (error) {
-          log.warn({ err: error, emailType: email.type, emailKey: email.key }, MESSAGES.ENQUEUE_FAILED);
+          log.warn(
+            { err: error, emailType: email.type, emailKey: email.key },
+            MESSAGES.ENQUEUE_FAILED,
+          );
         }
       }
     },

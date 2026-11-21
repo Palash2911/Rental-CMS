@@ -14,8 +14,14 @@ const USER_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const CUID_PATTERN = /^[cC][0-9a-z]{6,}$/;
 const CUID_MESSAGE = "Invalid cuid";
 
+// Prisma's cuid() ids are 25 characters; 64 leaves room without letting a huge string through.
+const CUID_MAX_LENGTH = 64;
+
 /** Id rule for models whose ids Prisma generates with cuid() (OwnerAccount, House and the rest). */
-export const cuidIdSchema = z.string().regex(CUID_PATTERN, CUID_MESSAGE);
+export const cuidIdSchema = z
+  .string()
+  .max(CUID_MAX_LENGTH, CUID_MESSAGE)
+  .regex(CUID_PATTERN, CUID_MESSAGE);
 
 /** Id rule for User ids, which are Firebase UIDs, not cuids. */
 export const userIdSchema = z
@@ -53,7 +59,10 @@ function isYearInRange(value) {
  */
 export const calendarDateSchema = z.iso
   .date({ error: DATE_MESSAGES.INVALID_DATE, abort: true })
-  .refine(isRealCalendarDate, { message: DATE_MESSAGES.INVALID_DATE, abort: true })
+  .refine(isRealCalendarDate, {
+    message: DATE_MESSAGES.INVALID_DATE,
+    abort: true,
+  })
   .refine(isYearInRange, DATE_MESSAGES.YEAR_OUT_OF_RANGE)
   .transform(toUtcMidnight);
 

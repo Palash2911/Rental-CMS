@@ -14,6 +14,9 @@ const TOKEN_PREFIX = "uid:";
 const EMAIL_DOMAIN = "example.test";
 const WEBHOOK_RESPONSE = Object.freeze({ received: true, fake: true });
 
+/** The one origin the test server's CORS policy allows. */
+export const TEST_FRONTEND_URL = "https://app.example.test";
+
 const servers = [];
 
 // Tokens are "uid:<id>": the stand-in verifier accepts them as that Firebase UID with a
@@ -46,6 +49,7 @@ export function tokenFor(userId) {
 export async function startTestServer({
   redis = testRedis,
   trustProxy = false,
+  isDevelopment = false,
 } = {}) {
   const webhookCalls = [];
 
@@ -65,7 +69,8 @@ export async function startTestServer({
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(WEBHOOK_RESPONSE));
     },
-    isDevelopment: false,
+    isDevelopment,
+    frontendUrl: TEST_FRONTEND_URL,
     // Yoga logs a line per request at its default level; the suite asserts on logging
     // through recordingLogger instead.
     logging: false,
