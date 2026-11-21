@@ -175,7 +175,7 @@ async function assertNotActiveTenant(tx, houseId, email) {
   }
 }
 
-async function supersedeExpiredInvitation(tx, { houseId, email, actorId, now }) {
+async function supersedeExpiredInvitation(tx, { houseId, ownerAccountId, email, actorId, now }) {
   const pending = await tx.invitation.findFirst({
     where: { houseId, email, status: InvitationStatus.PENDING },
     select: { id: true, expiresAt: true, status: true },
@@ -199,6 +199,7 @@ async function supersedeExpiredInvitation(tx, { houseId, email, actorId, now }) 
     entityType: ENTITY_TYPES.INVITATION,
     entityId: pending.id,
     action: ACTIVITY_ACTIONS.REVOKED,
+    ownerAccountId,
     performedByUserId: actorId,
     metadata: {
       reason: EXPIRED_SUPERSEDED_REASON,
@@ -242,7 +243,7 @@ async function insertInvitation(tx, data) {
  */
 export function createInvitation(
   context,
-  { actorId, houseId, email, leaseStartDate, leaseEndDate },
+  { actorId, ownerAccountId, houseId, email, leaseStartDate, leaseEndDate },
 ) {
   return context.prisma.$transaction(async (tx) => {
     await lockHouse(tx, houseId);
@@ -250,7 +251,7 @@ export function createInvitation(
     await assertNotActiveTenant(tx, houseId, email);
 
     const now = new Date();
-    await supersedeExpiredInvitation(tx, { houseId, email, actorId, now });
+    await supersedeExpiredInvitation(tx, { houseId, ownerAccountId, email, actorId, now });
     await assertPendingCapacity(tx, houseId, now);
 
     const invitation = await insertInvitation(tx, {
@@ -267,6 +268,7 @@ export function createInvitation(
       entityType: ENTITY_TYPES.INVITATION,
       entityId: invitation.id,
       action: ACTIVITY_ACTIONS.CREATED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: {
         houseId,
@@ -310,11 +312,12 @@ async function respond(tx, { id, now, data }) {
   }
 }
 
-function logResponse(tx, { invitation, action, actorId }) {
+function logResponse(tx, { invitation, action, actorId, ownerAccountId }) {
   return logActivity(tx, {
     entityType: ENTITY_TYPES.INVITATION,
     entityId: invitation.id,
     action,
+    ownerAccountId,
     performedByUserId: actorId,
     metadata: {
       fromStatus: InvitationStatus.PENDING,
@@ -330,7 +333,7 @@ function logResponse(tx, { invitation, action, actorId }) {
  * Moves a PENDING, unexpired invitation to REVOKED. `invitation` is the row the guard read.
  * Throws ConflictError when it is no longer pending or has expired.
  */
-export function revokeInvitation(context, { actorId, invitation: current }) {
+export function revokeInvitation(context, { actorId, ownerAccountId, invitation: current }) {
   const now = new Date();
   assertRespondable(current, now);
 
@@ -341,7 +344,12 @@ export function revokeInvitation(context, { actorId, invitation: current }) {
       data: { status: InvitationStatus.REVOKED },
     });
 
-    await logResponse(tx, { invitation, action: ACTIVITY_ACTIONS.REVOKED, actorId });
+    await logResponse(tx, {
+      invitation,
+      action: ACTIVITY_ACTIONS.REVOKED,
+      actorId,
+      ownerAccountId,
+    });
 
     return toPublicInvitation(invitation, now);
   });
@@ -352,7 +360,7 @@ export function revokeInvitation(context, { actorId, invitation: current }) {
 async function findInviteeInvitation(tx, id, actorEmail) {
   const invitation = await tx.invitation.findUnique({
     where: { id },
-    select: { id: true, houseId: true, email: true },
+    select: { id: true, houseId: true, email: true, house: { select: { ownerAccountId: true } } },
   });
 
   if (!invitation || invitation.email !== normaliseEmail(actorEmail)) {
@@ -368,7 +376,7 @@ async function findInviteeInvitation(tx, id, actorEmail) {
  */
 export function declineInvitation(context, { actorId, actorEmail, id }) {
   return context.prisma.$transaction(async (tx) => {
-    await findInviteeInvitation(tx, id, actorEmail);
+    const { house } = await findInviteeInvitation(tx, id, actorEmail);
 
     const now = new Date();
     const current = await tx.invitation.findUnique({
@@ -383,7 +391,12 @@ export function declineInvitation(context, { actorId, actorEmail, id }) {
       data: { status: InvitationStatus.DECLINED },
     });
 
-    await logResponse(tx, { invitation, action: ACTIVITY_ACTIONS.DECLINED, actorId });
+    await logResponse(tx, {
+      invitation,
+      action: ACTIVITY_ACTIONS.DECLINED,
+      actorId,
+      ownerAccountId: house.ownerAccountId,
+    });
 
     return toPublicInvitation(invitation, now);
   });
@@ -518,14 +531,20 @@ async function insertAssignment(tx, data) {
   }
 }
 
-async function logAcceptance(tx, { actorId, invitation, assignment, profile }) {
-  await logResponse(tx, { invitation, action: ACTIVITY_ACTIONS.ACCEPTED, actorId });
+async function logAcceptance(tx, { actorId, ownerAccountId, invitation, assignment, profile }) {
+  await logResponse(tx, {
+    invitation,
+    action: ACTIVITY_ACTIONS.ACCEPTED,
+    actorId,
+    ownerAccountId,
+  });
 
   if (profile.created) {
     await logActivity(tx, {
       entityType: ENTITY_TYPES.TENANT_PROFILE,
       entityId: profile.id,
       action: ACTIVITY_ACTIONS.CREATED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: { invitationId: invitation.id },
     });
@@ -535,6 +554,7 @@ async function logAcceptance(tx, { actorId, invitation, assignment, profile }) {
     entityType: ENTITY_TYPES.TENANT_ASSIGNMENT,
     entityId: assignment.id,
     action: ACTIVITY_ACTIONS.CREATED,
+    ownerAccountId,
     performedByUserId: actorId,
     metadata: {
       invitationId: invitation.id,
@@ -595,7 +615,13 @@ export function acceptInvitation(context, { actorId, actorEmail, id }) {
       },
     });
 
-    await logAcceptance(tx, { actorId, invitation, assignment, profile });
+    await logAcceptance(tx, {
+      actorId,
+      ownerAccountId: target.house.ownerAccountId,
+      invitation,
+      assignment,
+      profile,
+    });
 
     return toPublicAssignment(assignment);
   });

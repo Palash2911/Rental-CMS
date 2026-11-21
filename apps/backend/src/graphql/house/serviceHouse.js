@@ -84,6 +84,7 @@ export function createHouse(
       entityType: ENTITY_TYPES.HOUSE,
       entityId: house.id,
       action: ACTIVITY_ACTIONS.CREATED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: { ownerAccountId, name, location, maxTenants },
     });
@@ -143,7 +144,7 @@ function occupancyStatus(currentStatus, activeCount) {
 export async function syncOccupancy(tx, { houseId, actorId }) {
   const house = await tx.house.findUnique({
     where: { id: houseId },
-    select: { status: true },
+    select: { status: true, ownerAccountId: true },
   });
   const activeCount = await countActiveAssignments(tx, houseId);
   const status = occupancyStatus(house.status, activeCount);
@@ -162,6 +163,7 @@ export async function syncOccupancy(tx, { houseId, actorId }) {
     entityType: ENTITY_TYPES.HOUSE,
     entityId: houseId,
     action: ACTIVITY_ACTIONS.STATUS_CHANGED,
+    ownerAccountId: house.ownerAccountId,
     performedByUserId: actorId,
     metadata: { status: { from: house.status, to: status } },
   });
@@ -255,6 +257,7 @@ export function updateHouse(context, { actorId, id, ...input }) {
       action: changes.status
         ? ACTIVITY_ACTIONS.STATUS_CHANGED
         : ACTIVITY_ACTIONS.UPDATED,
+      ownerAccountId: house.ownerAccountId,
       performedByUserId: actorId,
       metadata: changeMetadata(house, changes),
     });

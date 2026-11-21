@@ -49,7 +49,7 @@ export const leaveRequestResolvers = {
 
   Mutation: {
     createLeaveRequest: async (_parent, args, context) => {
-      const { user, assignment } = await requireAssignmentAccess(
+      const { user, assignment, ownerAccount } = await requireAssignmentAccess(
         context,
         args.input.tenantAssignmentId,
         TENANT_WRITE_ACCESS,
@@ -59,11 +59,12 @@ export const leaveRequestResolvers = {
         ...input,
         houseId: assignment.houseId,
         actorId: user.id,
+        ownerAccountId: ownerAccount.id,
       });
     },
 
     withdrawLeaveRequest: async (_parent, args, context) => {
-      const { user, leaveRequest } = await requireLeaveRequestAccess(
+      const { user, leaveRequest, ownerAccount } = await requireLeaveRequestAccess(
         context,
         args.id,
         TENANT_WRITE_ACCESS,
@@ -71,13 +72,14 @@ export const leaveRequestResolvers = {
       const { id } = validate(leaveRequestIdSchema, args);
       return leaveRequestService.withdrawLeaveRequest(context, {
         actorId: user.id,
+        ownerAccountId: ownerAccount.id,
         id,
         houseId: leaveRequest.houseId,
       });
     },
 
     approveLeaveRequest: async (_parent, args, context) => {
-      const { user, leaveRequest } = await requireLeaveRequestAccess(
+      const { user, leaveRequest, ownerAccount } = await requireLeaveRequestAccess(
         context,
         args.id,
         OWNER_WRITE_ACCESS,
@@ -85,13 +87,14 @@ export const leaveRequestResolvers = {
       const { id } = validate(leaveRequestIdSchema, args);
       return leaveRequestService.approveLeaveRequest(context, {
         actorId: user.id,
+        ownerAccountId: ownerAccount.id,
         id,
         houseId: leaveRequest.houseId,
       });
     },
 
     rejectLeaveRequest: async (_parent, args, context) => {
-      const { user, leaveRequest } = await requireLeaveRequestAccess(
+      const { user, leaveRequest, ownerAccount } = await requireLeaveRequestAccess(
         context,
         args.id,
         OWNER_WRITE_ACCESS,
@@ -99,13 +102,14 @@ export const leaveRequestResolvers = {
       const { id } = validate(leaveRequestIdSchema, args);
       return leaveRequestService.rejectLeaveRequest(context, {
         actorId: user.id,
+        ownerAccountId: ownerAccount.id,
         id,
         houseId: leaveRequest.houseId,
       });
     },
 
     giveNotice: async (_parent, args, context) => {
-      const { user, assignment } = await requireAssignmentAccess(
+      const { user, assignment, ownerAccount } = await requireAssignmentAccess(
         context,
         args.tenantAssignmentId,
         OWNER_WRITE_ACCESS,
@@ -115,11 +119,12 @@ export const leaveRequestResolvers = {
         ...input,
         houseId: assignment.houseId,
         actorId: user.id,
+        ownerAccountId: ownerAccount.id,
       });
     },
 
     withdrawNotice: async (_parent, args, context) => {
-      const { user, assignment } = await requireAssignmentAccess(
+      const { user, assignment, ownerAccount } = await requireAssignmentAccess(
         context,
         args.tenantAssignmentId,
         OWNER_WRITE_ACCESS,
@@ -129,6 +134,7 @@ export const leaveRequestResolvers = {
         ...input,
         houseId: assignment.houseId,
         actorId: user.id,
+        ownerAccountId: ownerAccount.id,
       });
     },
   },

@@ -40,13 +40,37 @@ export const ACTIVITY_ACTIONS = Object.freeze({
   DELETION_EXECUTED: "DELETION_EXECUTED",
 });
 
-/** Writes an ActivityLog row. Call only with a transaction client, inside prisma.$transaction. */
+/**
+ * Writes an ActivityLog row. Call only with a transaction client, inside prisma.$transaction.
+ * `ownerAccountId` is mandatory: the account the entry belongs to, or an explicit null.
+ * Throws TypeError when it is omitted, so no call site can silently leave an entry unscoped.
+ */
 export function logActivity(
   tx,
-  { entityType, entityId, action, performedByUserId, metadata = {} },
+  {
+    entityType,
+    entityId,
+    action,
+    ownerAccountId,
+    performedByUserId,
+    metadata = {},
+  },
 ) {
+  if (ownerAccountId === undefined) {
+    throw new TypeError(
+      "logActivity requires ownerAccountId (a string or null).",
+    );
+  }
+
   return tx.activityLog.create({
-    data: { entityType, entityId, action, performedByUserId, metadata },
+    data: {
+      entityType,
+      entityId,
+      action,
+      ownerAccountId,
+      performedByUserId,
+      metadata,
+    },
     select: { id: true },
   });
 }

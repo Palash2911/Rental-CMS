@@ -38,13 +38,17 @@ export const receiptResolvers = {
 
   Mutation: {
     createReceipt: async (_parent, args, context) => {
-      const { user } = await requireAssignmentAccess(
+      const { user, ownerAccount } = await requireAssignmentAccess(
         context,
         args.input.tenantAssignmentId,
         TENANT_WRITE_ACCESS,
       );
       const { input } = validate(createReceiptSchema, args);
-      return receiptService.createReceipt(context, { ...input, actorId: user.id });
+      return receiptService.createReceipt(context, {
+        ...input,
+        actorId: user.id,
+        ownerAccountId: ownerAccount.id,
+      });
     },
   },
 };

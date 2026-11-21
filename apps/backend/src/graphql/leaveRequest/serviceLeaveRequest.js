@@ -21,7 +21,7 @@ const { ACTIVE, NOTICE_PERIOD } = TenantAssignmentStatus;
 
 const NOTICE_WITHDRAWN_REASON = "NOTICE_WITHDRAWN";
 
-const LEAVE_REQUEST_SELECT = Object.freeze({
+export const LEAVE_REQUEST_SELECT = Object.freeze({
   id: true,
   tenantAssignmentId: true,
   houseId: true,
@@ -120,7 +120,7 @@ async function insertLeaveRequest(tx, data) {
  */
 export function createLeaveRequest(
   context,
-  { actorId, tenantAssignmentId, houseId, requestedExitDate, reason },
+  { actorId, ownerAccountId, tenantAssignmentId, houseId, requestedExitDate, reason },
 ) {
   return context.prisma.$transaction(async (tx) => {
     await lockHouse(tx, houseId);
@@ -139,6 +139,7 @@ export function createLeaveRequest(
       entityType: ENTITY_TYPES.LEAVE_REQUEST,
       entityId: request.id,
       action: ACTIVITY_ACTIONS.CREATED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: {
         tenantAssignmentId,
@@ -167,11 +168,12 @@ async function respond(tx, { id, actorId, toStatus, now }) {
   }
 }
 
-function logResponse(tx, { request, action, actorId }) {
+function logResponse(tx, { request, action, actorId, ownerAccountId }) {
   return logActivity(tx, {
     entityType: ENTITY_TYPES.LEAVE_REQUEST,
     entityId: request.id,
     action,
+    ownerAccountId,
     performedByUserId: actorId,
     metadata: {
       tenantAssignmentId: request.tenantAssignmentId,
@@ -181,12 +183,15 @@ function logResponse(tx, { request, action, actorId }) {
   });
 }
 
-function respondUnderHouseLock(context, { id, houseId, actorId, toStatus, action }) {
+function respondUnderHouseLock(
+  context,
+  { id, houseId, actorId, ownerAccountId, toStatus, action },
+) {
   return context.prisma.$transaction(async (tx) => {
     await lockHouse(tx, houseId);
 
     const request = await respond(tx, { id, actorId, toStatus, now: new Date() });
-    await logResponse(tx, { request, action, actorId });
+    await logResponse(tx, { request, action, actorId, ownerAccountId });
 
     return toPublicLeaveRequest(request);
   });
@@ -196,11 +201,12 @@ function respondUnderHouseLock(context, { id, houseId, actorId, toStatus, action
  * Moves the tenant's PENDING leave request to WITHDRAWN, under the house row lock.
  * Throws ConflictError when it is no longer pending.
  */
-export function withdrawLeaveRequest(context, { actorId, id, houseId }) {
+export function withdrawLeaveRequest(context, { actorId, ownerAccountId, id, houseId }) {
   return respondUnderHouseLock(context, {
     id,
     houseId,
     actorId,
+    ownerAccountId,
     toStatus: WITHDRAWN,
     action: ACTIVITY_ACTIONS.WITHDRAWN,
   });
@@ -210,11 +216,12 @@ export function withdrawLeaveRequest(context, { actorId, id, houseId }) {
  * Moves a PENDING leave request to REJECTED, under the house row lock. The assignment is not
  * changed. Throws ConflictError when it is no longer pending.
  */
-export function rejectLeaveRequest(context, { actorId, id, houseId }) {
+export function rejectLeaveRequest(context, { actorId, ownerAccountId, id, houseId }) {
   return respondUnderHouseLock(context, {
     id,
     houseId,
     actorId,
+    ownerAccountId,
     toStatus: REJECTED,
     action: ACTIVITY_ACTIONS.REJECTED,
   });
@@ -237,7 +244,10 @@ async function moveAssignment(tx, { id, fromStatus, data, conflictMessage }) {
   }
 }
 
-async function startNoticePeriod(tx, { tenantAssignmentId, plannedExitDate, actorId, leaveRequestId }) {
+async function startNoticePeriod(
+  tx,
+  { tenantAssignmentId, plannedExitDate, actorId, ownerAccountId, leaveRequestId },
+) {
   const assignment = await moveAssignment(tx, {
     id: tenantAssignmentId,
     fromStatus: ACTIVE,
@@ -249,6 +259,7 @@ async function startNoticePeriod(tx, { tenantAssignmentId, plannedExitDate, acto
     entityType: ENTITY_TYPES.TENANT_ASSIGNMENT,
     entityId: tenantAssignmentId,
     action: ACTIVITY_ACTIONS.NOTICE_GIVEN,
+    ownerAccountId,
     performedByUserId: actorId,
     metadata: {
       fromStatus: ACTIVE,
@@ -266,17 +277,23 @@ async function startNoticePeriod(tx, { tenantAssignmentId, plannedExitDate, acto
  * plannedExitDate set to the requested date, in one transaction under the house row lock.
  * Throws ConflictError when the request is no longer pending or the assignment is not ACTIVE.
  */
-export function approveLeaveRequest(context, { actorId, id, houseId }) {
+export function approveLeaveRequest(context, { actorId, ownerAccountId, id, houseId }) {
   return context.prisma.$transaction(async (tx) => {
     await lockHouse(tx, houseId);
 
     const request = await respond(tx, { id, actorId, toStatus: APPROVED, now: new Date() });
-    await logResponse(tx, { request, action: ACTIVITY_ACTIONS.APPROVED, actorId });
+    await logResponse(tx, {
+      request,
+      action: ACTIVITY_ACTIONS.APPROVED,
+      actorId,
+      ownerAccountId,
+    });
 
     await startNoticePeriod(tx, {
       tenantAssignmentId: request.tenantAssignmentId,
       plannedExitDate: request.requestedExitDate,
       actorId,
+      ownerAccountId,
       leaveRequestId: request.id,
     });
 
@@ -288,17 +305,25 @@ export function approveLeaveRequest(context, { actorId, id, houseId }) {
  * Moves an ACTIVE assignment to NOTICE_PERIOD with the owner's planned exit date, under the
  * house row lock. Throws ConflictError when the assignment is not ACTIVE.
  */
-export function giveNotice(context, { actorId, tenantAssignmentId, houseId, plannedExitDate }) {
+export function giveNotice(
+  context,
+  { actorId, ownerAccountId, tenantAssignmentId, houseId, plannedExitDate },
+) {
   return context.prisma.$transaction(async (tx) => {
     await lockHouse(tx, houseId);
 
-    const assignment = await startNoticePeriod(tx, { tenantAssignmentId, plannedExitDate, actorId });
+    const assignment = await startNoticePeriod(tx, {
+      tenantAssignmentId,
+      plannedExitDate,
+      actorId,
+      ownerAccountId,
+    });
 
     return toPublicAssignment(assignment);
   });
 }
 
-async function withdrawApprovedRequests(tx, { tenantAssignmentId, actorId }) {
+async function withdrawApprovedRequests(tx, { tenantAssignmentId, actorId, ownerAccountId }) {
   const approved = await tx.leaveRequest.findMany({
     where: { tenantAssignmentId, status: APPROVED },
     select: { id: true },
@@ -321,6 +346,7 @@ async function withdrawApprovedRequests(tx, { tenantAssignmentId, actorId }) {
       entityType: ENTITY_TYPES.LEAVE_REQUEST,
       entityId: id,
       action: ACTIVITY_ACTIONS.WITHDRAWN,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: {
         tenantAssignmentId,
@@ -339,7 +365,7 @@ async function withdrawApprovedRequests(tx, { tenantAssignmentId, actorId }) {
  * APPROVED leave request on it WITHDRAWN, in one transaction under the house row lock.
  * Throws ConflictError when the assignment is not in its notice period.
  */
-export function withdrawNotice(context, { actorId, tenantAssignmentId, houseId }) {
+export function withdrawNotice(context, { actorId, ownerAccountId, tenantAssignmentId, houseId }) {
   return context.prisma.$transaction(async (tx) => {
     await lockHouse(tx, houseId);
 
@@ -358,12 +384,14 @@ export function withdrawNotice(context, { actorId, tenantAssignmentId, houseId }
     const withdrawnLeaveRequestIds = await withdrawApprovedRequests(tx, {
       tenantAssignmentId,
       actorId,
+      ownerAccountId,
     });
 
     await logActivity(tx, {
       entityType: ENTITY_TYPES.TENANT_ASSIGNMENT,
       entityId: tenantAssignmentId,
       action: ACTIVITY_ACTIONS.NOTICE_WITHDRAWN,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: {
         fromStatus: NOTICE_PERIOD,

@@ -167,6 +167,7 @@ export function createOwnerAccount(context, { actorId, name }) {
       entityType: ENTITY_TYPES.OWNER_ACCOUNT,
       entityId: account.id,
       action: ACTIVITY_ACTIONS.CREATED,
+      ownerAccountId: account.id,
       performedByUserId: actorId,
       metadata: { name },
     });
@@ -188,6 +189,7 @@ export function renameOwnerAccount(context, { actorId, id, name }) {
       entityType: ENTITY_TYPES.OWNER_ACCOUNT,
       entityId: id,
       action: ACTIVITY_ACTIONS.UPDATED,
+      ownerAccountId: id,
       performedByUserId: actorId,
       metadata: { name },
     });
@@ -240,6 +242,7 @@ function applyTransition(context, transition, { actorId, id, metadata = {} }) {
       entityType: ENTITY_TYPES.OWNER_ACCOUNT,
       entityId: id,
       action: transition.action,
+      ownerAccountId: id,
       performedByUserId: actorId,
       metadata: { fromStatus: current.status, toStatus: account.status, ...metadata },
     });

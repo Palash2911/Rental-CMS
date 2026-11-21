@@ -38,11 +38,11 @@ describe("concurrent requests against one bucket", () => {
       await resetDatabase();
       const { url } = await startTestServer();
       const token = tokenFor(firebaseUid());
-      const total = RATE_LIMITS.SENSITIVE_MUTATION.limit + EXTRA;
+      const total = RATE_LIMITS.SENSITIVE.limit + EXTRA;
 
       const results = await Promise.all(Array.from({ length: total }, () => postGraphql(url, CHECKOUT, { token })));
 
-      assert.deepEqual(statuses(results), { ok: RATE_LIMITS.SENSITIVE_MUTATION.limit, limited: EXTRA }, `round ${round}`);
+      assert.deepEqual(statuses(results), { ok: RATE_LIMITS.SENSITIVE.limit, limited: EXTRA }, `round ${round}`);
     }
   });
 });

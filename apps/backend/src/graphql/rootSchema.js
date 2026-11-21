@@ -1,6 +1,8 @@
 import { createSchema } from "graphql-yoga";
 
 import { scalarResolvers, scalarTypeDefs } from "../lib/scalars.js";
+import { activityLogResolvers } from "./activityLog/resolversActivityLog.js";
+import { activityLogTypeDefs } from "./activityLog/typeDefsActivityLog.js";
 import { billingResolvers } from "./billing/resolversBilling.js";
 import { billingTypeDefs } from "./billing/typeDefsBilling.js";
 import { houseResolvers } from "./house/resolversHouse.js";
@@ -17,6 +19,8 @@ import { ownerAccountResolvers } from "./ownerAccount/resolversOwnerAccount.js";
 import { ownerAccountTypeDefs } from "./ownerAccount/typeDefsOwnerAccount.js";
 import { receiptResolvers } from "./receipts/resolversReceipts.js";
 import { receiptTypeDefs } from "./receipts/typeDefsReceipts.js";
+import { tenancyExportResolvers } from "./tenancyExport/resolversTenancyExport.js";
+import { tenancyExportTypeDefs } from "./tenancyExport/typeDefsTenancyExport.js";
 import { tenantResolvers } from "./tenant/resolversTenant.js";
 import { tenantTypeDefs } from "./tenant/typeDefsTenant.js";
 import { tenantAssignmentResolvers } from "./tenantAssignment/resolversTenantAssignment.js";
@@ -49,6 +53,8 @@ export const schema = createSchema({
     billingTypeDefs,
     memberTypeDefs,
     leaveRequestTypeDefs,
+    tenancyExportTypeDefs,
+    activityLogTypeDefs,
   ],
   resolvers: [
     scalarResolvers,
@@ -63,5 +69,7 @@ export const schema = createSchema({
     billingResolvers,
     memberResolvers,
     leaveRequestResolvers,
+    tenancyExportResolvers,
+    activityLogResolvers,
   ],
 });

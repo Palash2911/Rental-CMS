@@ -9,7 +9,7 @@ import {
   toCalendarDate,
 } from "../tenantAssignment/serviceTenantAssignment.js";
 
-const RECEIPT_SELECT = Object.freeze({
+export const RECEIPT_SELECT = Object.freeze({
   id: true,
   tenantAssignmentId: true,
   amountCents: true,
@@ -55,7 +55,7 @@ export async function listReceiptsByAssignment(
  */
 export function createReceipt(
   context,
-  { actorId, tenantAssignmentId, amountCents, currency, paidAt, note },
+  { actorId, ownerAccountId, tenantAssignmentId, amountCents, currency, paidAt, note },
 ) {
   return context.prisma.$transaction(async (tx) => {
     await lockActiveAssignment(tx, tenantAssignmentId);
@@ -75,6 +75,7 @@ export function createReceipt(
       entityType: ENTITY_TYPES.RECEIPT,
       entityId: receipt.id,
       action: ACTIVITY_ACTIONS.CREATED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: {
         tenantAssignmentId,

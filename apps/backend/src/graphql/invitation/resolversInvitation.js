@@ -41,7 +41,7 @@ export const invitationResolvers = {
 
   Mutation: {
     createInvitation: async (_parent, args, context) => {
-      const { user } = await requireHouseAccess(
+      const { user, ownerAccount } = await requireHouseAccess(
         context,
         args.input.houseId,
         OWNER_WRITE,
@@ -50,11 +50,12 @@ export const invitationResolvers = {
       return invitationService.createInvitation(context, {
         ...input,
         actorId: user.id,
+        ownerAccountId: ownerAccount.id,
       });
     },
 
     revokeInvitation: async (_parent, args, context) => {
-      const { user, invitation } = await requireInvitationAccess(
+      const { user, invitation, ownerAccount } = await requireInvitationAccess(
         context,
         args.id,
         OWNER_WRITE,
@@ -62,6 +63,7 @@ export const invitationResolvers = {
       validate(invitationIdSchema, args);
       return invitationService.revokeInvitation(context, {
         actorId: user.id,
+        ownerAccountId: ownerAccount.id,
         invitation,
       });
     },

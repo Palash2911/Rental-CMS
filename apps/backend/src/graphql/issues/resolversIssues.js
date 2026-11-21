@@ -69,7 +69,7 @@ export const issueResolvers = {
 
   Mutation: {
     createIssue: async (_parent, args, context) => {
-      const { user, assignment } = await requireAssignmentAccess(
+      const { user, assignment, ownerAccount } = await requireAssignmentAccess(
         context,
         args.input.tenantAssignmentId,
         TENANT_WRITE_ACCESS,
@@ -79,6 +79,7 @@ export const issueResolvers = {
         ...input,
         houseId: assignment.houseId,
         actorId: user.id,
+        ownerAccountId: ownerAccount.id,
       });
     },
 
@@ -93,6 +94,7 @@ export const issueResolvers = {
         ...input,
         actorId: access.user.id,
         actorRoles: actorRoles(access),
+        ownerAccountId: access.ownerAccount.id,
         tenantAssignmentId: access.issue.tenantAssignmentId,
       });
     },

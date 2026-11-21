@@ -263,6 +263,7 @@ export function startCheckout(
         entityType: ENTITY_TYPES.SUBSCRIPTION,
         entityId: current.id,
         action: ACTIVITY_ACTIONS.CHECKOUT_STARTED,
+        ownerAccountId,
         performedByUserId: actorId,
         metadata: { ownerAccountId, plan, interval, trial: withTrial },
       });
@@ -326,6 +327,7 @@ export function setEnterprise(context, { actorId, ownerAccountId, enterprise }) 
       entityType: ENTITY_TYPES.SUBSCRIPTION,
       entityId: current.id,
       action: enterprise ? ACTIVITY_ACTIONS.ENTERPRISE_SET : ACTIVITY_ACTIONS.ENTERPRISE_CLEARED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: { ownerAccountId },
     });
@@ -397,6 +399,7 @@ export async function approveAfterCheckout(tx, { ownerAccountId, stripeStatus })
     entityType: ENTITY_TYPES.OWNER_ACCOUNT,
     entityId: ownerAccountId,
     action: ACTIVITY_ACTIONS.APPROVED,
+    ownerAccountId,
     performedByUserId: null,
     metadata: {
       fromStatus: OwnerAccountStatus.PENDING,

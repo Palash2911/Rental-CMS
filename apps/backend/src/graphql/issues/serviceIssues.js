@@ -28,7 +28,7 @@ const TRANSITIONS = Object.freeze({
   }),
 });
 
-const ISSUE_SELECT = Object.freeze({
+export const ISSUE_SELECT = Object.freeze({
   id: true,
   tenantAssignmentId: true,
   houseId: true,
@@ -89,7 +89,7 @@ export function listIssuesByHouse(context, { houseId, ...options }) {
  */
 export function createIssue(
   context,
-  { actorId, tenantAssignmentId, houseId, title, description },
+  { actorId, ownerAccountId, tenantAssignmentId, houseId, title, description },
 ) {
   return context.prisma.$transaction(async (tx) => {
     await shareLockHouse(tx, houseId);
@@ -104,6 +104,7 @@ export function createIssue(
       entityType: ENTITY_TYPES.ISSUE,
       entityId: issue.id,
       action: ACTIVITY_ACTIONS.CREATED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: { tenantAssignmentId, houseId, title },
     });
@@ -141,7 +142,7 @@ async function updateIfStatusUnchanged(tx, id, from, to) {
  */
 export function updateIssueStatus(
   context,
-  { actorId, actorRoles, id, tenantAssignmentId, status },
+  { actorId, actorRoles, ownerAccountId, id, tenantAssignmentId, status },
 ) {
   return context.prisma.$transaction(async (tx) => {
     const current = await tx.issue.findUnique({
@@ -164,6 +165,7 @@ export function updateIssueStatus(
       entityType: ENTITY_TYPES.ISSUE,
       entityId: id,
       action: ACTIVITY_ACTIONS.STATUS_CHANGED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: { fromStatus: current.status, toStatus: issue.status, actorRole: role },
     });

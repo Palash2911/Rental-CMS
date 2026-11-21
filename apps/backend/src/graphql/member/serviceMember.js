@@ -255,6 +255,7 @@ async function supersedeExpiredInvitation(tx, { ownerAccountId, email, actorId, 
     entityType: ENTITY_TYPES.MEMBER_INVITATION,
     entityId: pending.id,
     action: ACTIVITY_ACTIONS.REVOKED,
+    ownerAccountId,
     performedByUserId: actorId,
     metadata: {
       reason: EXPIRED_SUPERSEDED_REASON,
@@ -315,6 +316,7 @@ export function createMemberInvitation(context, { actorId, ownerAccountId, email
       entityType: ENTITY_TYPES.MEMBER_INVITATION,
       entityId: invitation.id,
       action: ACTIVITY_ACTIONS.CREATED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: { ownerAccountId, expiresAt: invitation.expiresAt.toISOString() },
     });
@@ -355,6 +357,7 @@ function logResponse(tx, { invitation, action, actorId, metadata = {} }) {
     entityType: ENTITY_TYPES.MEMBER_INVITATION,
     entityId: invitation.id,
     action,
+    ownerAccountId: invitation.ownerAccountId,
     performedByUserId: actorId,
     metadata: { fromStatus: InvitationStatus.PENDING, toStatus: invitation.status, ...metadata },
   });
@@ -485,6 +488,7 @@ export function acceptMemberInvitation(context, { actorId, actorEmail, id }) {
       entityType: ENTITY_TYPES.OWNER_ACCOUNT_MEMBER,
       entityId: member.id,
       action: ACTIVITY_ACTIONS.CREATED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: { ownerAccountId, userId: actorId, role: member.role, memberInvitationId: id },
     });
@@ -500,6 +504,7 @@ async function deleteMember(tx, { member, ownerAccountId, actorId, action }) {
     entityType: ENTITY_TYPES.OWNER_ACCOUNT_MEMBER,
     entityId: member.id,
     action,
+    ownerAccountId,
     performedByUserId: actorId,
     metadata: { ownerAccountId, userId: member.userId, role: member.role },
   });
@@ -644,6 +649,7 @@ async function recordCustomerEmailSyncFailure(context, { actorId, ...metadata })
         entityType: ENTITY_TYPES.SUBSCRIPTION,
         entityId: metadata.ownerAccountId,
         action: ACTIVITY_ACTIONS.CUSTOMER_EMAIL_SYNC_FAILED,
+        ownerAccountId: metadata.ownerAccountId,
         performedByUserId: actorId,
         metadata,
       }),
@@ -705,6 +711,7 @@ function commitOwnershipTransfer(context, { actorId, ownerAccountId, newPrimaryU
       entityType: ENTITY_TYPES.OWNER_ACCOUNT,
       entityId: ownerAccountId,
       action: ACTIVITY_ACTIONS.OWNERSHIP_TRANSFERRED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: { fromUserId: actorId, toUserId: newPrimaryUserId },
     });

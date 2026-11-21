@@ -13,6 +13,7 @@ const MESSAGES = Object.freeze({
   INVALID_DATE_TIME:
     "Enter a valid ISO 8601 date and time with a time zone, such as 2026-11-01T09:30:00Z.",
   STRING_REQUIRED: "Expected a string.",
+  JSON_INPUT_NOT_ACCEPTED: "JSON values are not accepted as input.",
 });
 
 const dateTimeInputSchema = z.iso.datetime({ offset: true });
@@ -120,12 +121,57 @@ export const DateScalar = new GraphQLScalarType({
   coerceInputLiteral: (ast) => toDateInput(requireStringLiteral(ast)),
 });
 
+function isJsonValue(value) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return true;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue);
+  }
+
+  if (typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.values(value).every(isJsonValue);
+  }
+
+  return false;
+}
+
+function toJsonOutput(value) {
+  if (isJsonValue(value)) {
+    return value;
+  }
+
+  throw new TypeError("JSON cannot represent this value.");
+}
+
+// Output only: no operation takes free-form JSON, so any JSON input is refused rather than
+// passed unchecked to a resolver.
+function rejectJsonInput() {
+  throw new BadUserInputError(MESSAGES.JSON_INPUT_NOT_ACCEPTED);
+}
+
+/** JSON: any JSON value, for stored metadata. Output only; inputs are refused. */
+export const JsonScalar = new GraphQLScalarType({
+  name: "JSON",
+  description: "Any JSON value. Used for output only.",
+  coerceOutputValue: toJsonOutput,
+  coerceInputValue: rejectJsonInput,
+  coerceInputLiteral: rejectJsonInput,
+});
+
 export const scalarTypeDefs = `
   scalar DateTime
   scalar Date
+  scalar JSON
 `;
 
 export const scalarResolvers = Object.freeze({
   DateTime: DateTimeScalar,
   Date: DateScalar,
+  JSON: JsonScalar,
 });

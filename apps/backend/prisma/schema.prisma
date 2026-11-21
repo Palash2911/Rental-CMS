@@ -110,6 +110,7 @@ model OwnerAccount {
   memberInvitations MemberInvitation[]
   houses            House[]
   subscription      Subscription?
+  activityLogs      ActivityLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -385,11 +386,20 @@ model ActivityLog {
   entityId   String
   action     String
 
+  // The owner account the entry belongs to, set by logActivity from the value the guard or
+  // service already read. Null for entries no account can be resolved for (old rows whose
+  // entity was deleted with its account's data).
+  ownerAccountId    String?
   performedByUserId String?
   metadata          Json?
+
+  ownerAccount OwnerAccount? @relation(fields: [ownerAccountId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
   @@index([entityType, entityId, createdAt])
-  @@index([performedByUserId])
+  @@index([ownerAccountId, createdAt, id])
+  @@index([ownerAccountId, entityType, createdAt, id])
+  @@index([createdAt, id])
+  @@index([performedByUserId, createdAt, id])
 }

@@ -40,9 +40,13 @@ const MESSAGES = Object.freeze({
  * Throws ConflictError when the assignment is not active.
  */
 export async function lockActiveAssignment(tx, assignmentId) {
-  const rows = await tx.$queryRaw`SELECT status FROM "TenantAssignment" WHERE id = ${assignmentId} FOR SHARE`;
+  const rows =
+    await tx.$queryRaw`SELECT status FROM "TenantAssignment" WHERE id = ${assignmentId} FOR SHARE`;
 
-  if (rows.length === 0 || !ACTIVE_ASSIGNMENT_STATUSES.includes(rows[0].status)) {
+  if (
+    rows.length === 0 ||
+    !ACTIVE_ASSIGNMENT_STATUSES.includes(rows[0].status)
+  ) {
     throw new ConflictError(MESSAGES.ASSIGNMENT_NOT_ACTIVE);
   }
 }
@@ -139,7 +143,10 @@ async function markExited(tx, id, now) {
  * Exits an ACTIVE or NOTICE_PERIOD assignment under the house row lock, then sets the house
  * VACANT when no active assignment remains. Throws ConflictError for an EXITED assignment.
  */
-export function exitAssignment(context, { actorId, id, houseId }) {
+export function exitAssignment(
+  context,
+  { actorId, ownerAccountId, id, houseId },
+) {
   return context.prisma.$transaction(async (tx) => {
     await lockHouse(tx, houseId);
 
@@ -159,6 +166,7 @@ export function exitAssignment(context, { actorId, id, houseId }) {
       entityType: ENTITY_TYPES.TENANT_ASSIGNMENT,
       entityId: id,
       action: ACTIVITY_ACTIONS.EXITED,
+      ownerAccountId,
       performedByUserId: actorId,
       metadata: {
         fromStatus: current.status,

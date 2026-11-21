@@ -1,6 +1,10 @@
 import { OwnerAccountStatus } from "../generated/prisma/enums.ts";
 import { lockOwnerAccount } from "../graphql/billing/subscriptionStore.js";
-import { ACTIVITY_ACTIONS, ENTITY_TYPES, logActivity } from "../lib/activity.js";
+import {
+  ACTIVITY_ACTIONS,
+  ENTITY_TYPES,
+  logActivity,
+} from "../lib/activity.js";
 import { isLiveStatus } from "../lib/entitlement.js";
 import {
   afterIdFilter,
@@ -18,8 +22,10 @@ const OPEN_CHECKOUT_STATUS = "open";
 const TOMBSTONE_NAME = "";
 
 const MESSAGES = Object.freeze({
-  STRIPE_FAILED: "Account deletion deferred: Stripe could not cancel billing. The next run retries.",
-  SUBSCRIPTION_CHANGED: "Account deletion deferred: the subscription changed during the run. The next run retries.",
+  STRIPE_FAILED:
+    "Account deletion deferred: Stripe could not cancel billing. The next run retries.",
+  SUBSCRIPTION_CHANGED:
+    "Account deletion deferred: the subscription changed during the run. The next run retries.",
 });
 
 function fetchBatch(prisma, now) {
@@ -44,7 +50,10 @@ function isMissing(error) {
   return error?.code === STRIPE_MISSING_CODE;
 }
 
-async function cancelStripeSubscription(gateway, { ownerAccountId, stripeSubscriptionId }) {
+async function cancelStripeSubscription(
+  gateway,
+  { ownerAccountId, stripeSubscriptionId },
+) {
   let subscription;
 
   try {
@@ -143,14 +152,30 @@ async function deleteAccountData(tx, ownerAccountId, houseIds) {
   const counts = {};
 
   counts.issues = (await tx.issue.deleteMany({ where: byHouse })).count;
-  counts.receipts = (await tx.receipt.deleteMany({ where: { tenantAssignment: byHouse } })).count;
-  counts.leaveRequests = (await tx.leaveRequest.deleteMany({ where: byHouse })).count;
-  counts.invitations = (await tx.invitation.deleteMany({ where: byHouse })).count;
-  counts.tenantAssignments = (await tx.tenantAssignment.deleteMany({ where: byHouse })).count;
-  counts.houses = (await tx.house.deleteMany({ where: { ownerAccountId } })).count;
-  counts.memberInvitations = (await tx.memberInvitation.deleteMany({ where: { ownerAccountId } })).count;
-  counts.members = (await tx.ownerAccountMember.deleteMany({ where: { ownerAccountId } })).count;
-  counts.subscriptions = (await tx.subscription.deleteMany({ where: { ownerAccountId } })).count;
+  counts.receipts = (
+    await tx.receipt.deleteMany({ where: { tenantAssignment: byHouse } })
+  ).count;
+  counts.leaveRequests = (
+    await tx.leaveRequest.deleteMany({ where: byHouse })
+  ).count;
+  counts.invitations = (
+    await tx.invitation.deleteMany({ where: byHouse })
+  ).count;
+  counts.tenantAssignments = (
+    await tx.tenantAssignment.deleteMany({ where: byHouse })
+  ).count;
+  counts.houses = (
+    await tx.house.deleteMany({ where: { ownerAccountId } })
+  ).count;
+  counts.memberInvitations = (
+    await tx.memberInvitation.deleteMany({ where: { ownerAccountId } })
+  ).count;
+  counts.members = (
+    await tx.ownerAccountMember.deleteMany({ where: { ownerAccountId } })
+  ).count;
+  counts.subscriptions = (
+    await tx.subscription.deleteMany({ where: { ownerAccountId } })
+  ).count;
 
   return counts;
 }
@@ -165,9 +190,16 @@ function deleteAccount({ prisma, billingGateway, log }, now) {
     let stripeSubscriptionCanceled;
 
     try {
-      stripeSubscriptionCanceled = await stopBilling(billingGateway, ownerAccountId, subscription);
+      stripeSubscriptionCanceled = await stopBilling(
+        billingGateway,
+        ownerAccountId,
+        subscription,
+      );
     } catch (error) {
-      log.warn({ err: error, job: ACCOUNT_DELETION_JOB, ownerAccountId }, MESSAGES.STRIPE_FAILED);
+      log.warn(
+        { err: error, job: ACCOUNT_DELETION_JOB, ownerAccountId },
+        MESSAGES.STRIPE_FAILED,
+      );
       return OUTCOMES.DEFERRED;
     }
 
@@ -184,15 +216,24 @@ function deleteAccount({ prisma, billingGateway, log }, now) {
         // after Stripe was called above; that subscription is cancelled next run.
         const locked = await lockSubscriptionRow(tx, ownerAccountId);
 
-        if ((locked?.stripeSubscriptionId ?? null) !== (subscription?.stripeSubscriptionId ?? null)) {
-          log.warn({ job: ACCOUNT_DELETION_JOB, ownerAccountId }, MESSAGES.SUBSCRIPTION_CHANGED);
+        if (
+          (locked?.stripeSubscriptionId ?? null) !==
+          (subscription?.stripeSubscriptionId ?? null)
+        ) {
+          log.warn(
+            { job: ACCOUNT_DELETION_JOB, ownerAccountId },
+            MESSAGES.SUBSCRIPTION_CHANGED,
+          );
           return OUTCOMES.DEFERRED;
         }
 
         const deleted = await deleteAccountData(tx, ownerAccountId, houseIds);
 
         await tx.ownerAccount.update({
-          where: { id: ownerAccountId, status: OwnerAccountStatus.PENDING_DELETION },
+          where: {
+            id: ownerAccountId,
+            status: OwnerAccountStatus.PENDING_DELETION,
+          },
           data: { name: TOMBSTONE_NAME, deletionExecutedAt: now },
           select: { id: true },
         });
@@ -201,6 +242,7 @@ function deleteAccount({ prisma, billingGateway, log }, now) {
           entityType: ENTITY_TYPES.OWNER_ACCOUNT,
           entityId: ownerAccountId,
           action: ACTIVITY_ACTIONS.DELETION_EXECUTED,
+          ownerAccountId,
           performedByUserId: null,
           metadata: { deleted, stripeSubscriptionCanceled },
         });
@@ -221,7 +263,10 @@ function deleteAccount({ prisma, billingGateway, log }, now) {
  * set) and the activity log is kept. Idempotent: a tombstone is never selected again.
  * Returns the run summary.
  */
-export function runAccountDeletion(dependencies, { now = new Date(), batchSize = DEFAULT_BATCH_SIZE } = {}) {
+export function runAccountDeletion(
+  dependencies,
+  { now = new Date(), batchSize = DEFAULT_BATCH_SIZE } = {},
+) {
   return forEachAccount({
     job: ACCOUNT_DELETION_JOB,
     log: dependencies.log,

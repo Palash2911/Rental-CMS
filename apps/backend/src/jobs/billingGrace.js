@@ -1,10 +1,17 @@
-import { DeletionReason, OwnerAccountStatus } from "../generated/prisma/enums.ts";
-import { DELETION_GRACE_DAYS } from "../graphql/ownerAccount/serviceOwnerAccount.js";
+import {
+  DeletionReason,
+  OwnerAccountStatus,
+} from "../generated/prisma/enums.ts";
 import {
   lockOwnerAccount,
   syncReadOnlySince,
 } from "../graphql/billing/subscriptionStore.js";
-import { ACTIVITY_ACTIONS, ENTITY_TYPES, logActivity } from "../lib/activity.js";
+import { DELETION_GRACE_DAYS } from "../graphql/ownerAccount/serviceOwnerAccount.js";
+import {
+  ACTIVITY_ACTIONS,
+  ENTITY_TYPES,
+  logActivity,
+} from "../lib/activity.js";
 import { ACCESS, computeEntitlement } from "../lib/entitlement.js";
 import {
   afterIdFilter,
@@ -33,7 +40,10 @@ function fetchBatch(prisma, cutoff) {
     const rows = await prisma.subscription.findMany({
       where: {
         readOnlySince: { lt: cutoff },
-        ownerAccount: { status: { in: SCHEDULABLE_STATUSES }, deletionExecutedAt: null },
+        ownerAccount: {
+          status: { in: SCHEDULABLE_STATUSES },
+          deletionExecutedAt: null,
+        },
         ...afterIdFilter("ownerAccountId", afterId),
       },
       orderBy: { ownerAccountId: "asc" },
@@ -65,9 +75,15 @@ async function stillEligible(tx, ownerAccountId, cutoff) {
 
   const subscription = await lockSubscriptionRow(tx, ownerAccountId);
   const readOnlySince = subscription?.readOnlySince ?? null;
-  const readOnly = computeEntitlement(account.status, subscription).access === ACCESS.READ_ONLY;
+  const readOnly =
+    computeEntitlement(account.status, subscription).access ===
+    ACCESS.READ_ONLY;
 
-  if (!readOnly || !readOnlySince || readOnlySince.getTime() >= cutoff.getTime()) {
+  if (
+    !readOnly ||
+    !readOnlySince ||
+    readOnlySince.getTime() >= cutoff.getTime()
+  ) {
     return null;
   }
 
@@ -100,6 +116,7 @@ function scheduleDeletion(prisma, { cutoff, now }) {
         entityType: ENTITY_TYPES.OWNER_ACCOUNT,
         entityId: ownerAccountId,
         action: ACTIVITY_ACTIONS.DELETION_SCHEDULED,
+        ownerAccountId,
         performedByUserId: null,
         metadata: {
           fromStatus: eligible.status,
@@ -122,7 +139,10 @@ function scheduleDeletion(prisma, { cutoff, now }) {
  * owner: the owner keeps the usual deletion window to pay or cancel), one account per
  * transaction. Idempotent: a scheduled account is no longer selected. Returns the run summary.
  */
-export function runBillingGrace({ prisma, log }, { now = new Date(), batchSize = DEFAULT_BATCH_SIZE } = {}) {
+export function runBillingGrace(
+  { prisma, log },
+  { now = new Date(), batchSize = DEFAULT_BATCH_SIZE } = {},
+) {
   const cutoff = daysBefore(now, BILLING_GRACE_DAYS);
 
   return forEachAccount({

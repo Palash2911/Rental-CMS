@@ -190,6 +190,7 @@ async function cancelBillingDeletion(tx, { ownerAccountId, stripeStatus, eventId
     entityType: ENTITY_TYPES.OWNER_ACCOUNT,
     entityId: ownerAccountId,
     action: ACTIVITY_ACTIONS.DELETION_CANCELLED,
+    ownerAccountId,
     performedByUserId: null,
     metadata: {
       fromStatus: OwnerAccountStatus.PENDING_DELETION,
@@ -236,6 +237,7 @@ async function applyPlan(tx, { event, plan, now }) {
         entityType: ENTITY_TYPES.SUBSCRIPTION,
         entityId: applied.subscriptionRowId,
         action: ACTIVITY_ACTIONS.SYNCED,
+        ownerAccountId: plan.ownerAccountId,
         performedByUserId: null,
         metadata: {
           ownerAccountId: plan.ownerAccountId,

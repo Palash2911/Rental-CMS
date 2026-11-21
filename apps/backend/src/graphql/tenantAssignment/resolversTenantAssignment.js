@@ -54,7 +54,7 @@ export const tenantAssignmentResolvers = {
 
   Mutation: {
     exitTenantAssignment: async (_parent, args, context) => {
-      const { user, assignment } = await requireAssignmentAccess(
+      const { user, assignment, ownerAccount } = await requireAssignmentAccess(
         context,
         args.id,
         EXIT_ACCESS,
@@ -62,6 +62,7 @@ export const tenantAssignmentResolvers = {
       const { id } = validate(assignmentIdSchema, args);
       return assignmentService.exitAssignment(context, {
         actorId: user.id,
+        ownerAccountId: ownerAccount.id,
         id,
         houseId: assignment.houseId,
       });

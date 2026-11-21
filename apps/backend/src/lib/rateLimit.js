@@ -12,7 +12,7 @@ export const RATE_LIMITS = Object.freeze({
   ANONYMOUS: Object.freeze({ name: "ip", limit: 60 }),
   USER: Object.freeze({ name: "user", limit: 300 }),
   MUTATION: Object.freeze({ name: "mutation", limit: 60 }),
-  SENSITIVE_MUTATION: Object.freeze({ name: "sensitive", limit: 10 }),
+  SENSITIVE: Object.freeze({ name: "sensitive", limit: 10 }),
 });
 
 /** Mutations that cost money, send something or hit Stripe; they share one tighter bucket. */
@@ -22,6 +22,9 @@ export const SENSITIVE_MUTATIONS = Object.freeze([
   "startCheckout",
   "openBillingPortal",
 ]);
+
+/** Queries that return a whole data set in one response; they share the sensitive bucket. */
+export const SENSITIVE_QUERIES = Object.freeze(["tenancyExport"]);
 
 const KEY_PREFIX = "ratelimit";
 const MS_PER_SECOND = 1000;
@@ -42,7 +45,8 @@ const HEX_RADIX = 16;
 const FAIL_OPEN_MESSAGE = "Rate limit skipped: Redis is unavailable.";
 
 function normaliseIp(ip) {
-  return ip.startsWith(IPV4_MAPPED_PREFIX) && isIP(ip.slice(IPV4_MAPPED_PREFIX.length))
+  return ip.startsWith(IPV4_MAPPED_PREFIX) &&
+    isIP(ip.slice(IPV4_MAPPED_PREFIX.length))
     ? ip.slice(IPV4_MAPPED_PREFIX.length)
     : ip;
 }
@@ -54,7 +58,9 @@ function hextets(part) {
 // An embedded IPv4 tail (for example 64:ff9b::192.0.2.1) fills the last two hextets. Their
 // values never matter here: they lie outside the /64 prefix.
 function withoutEmbeddedIpv4(groups) {
-  return groups.at(-1)?.includes(IPV4_SEPARATOR) ? [...groups.slice(0, -1), "0", "0"] : groups;
+  return groups.at(-1)?.includes(IPV4_SEPARATOR)
+    ? [...groups.slice(0, -1), "0", "0"]
+    : groups;
 }
 
 // A single client usually controls a whole /64, so per-address IPv6 buckets could be rotated
@@ -62,11 +68,17 @@ function withoutEmbeddedIpv4(groups) {
 function ipv6Prefix64(ip) {
   const address = ip.split(IPV6_ZONE_SEPARATOR)[0].toLowerCase();
   const compressed = address.includes(IPV6_COMPRESSION);
-  const [head, tail = ""] = compressed ? address.split(IPV6_COMPRESSION) : [address];
+  const [head, tail = ""] = compressed
+    ? address.split(IPV6_COMPRESSION)
+    : [address];
   const headGroups = withoutEmbeddedIpv4(hextets(head));
   const tailGroups = withoutEmbeddedIpv4(hextets(tail));
-  const zeros = Array(IPV6_HEXTETS - headGroups.length - tailGroups.length).fill("0");
-  const groups = compressed ? [...headGroups, ...zeros, ...tailGroups] : headGroups;
+  const zeros = Array(
+    IPV6_HEXTETS - headGroups.length - tailGroups.length,
+  ).fill("0");
+  const groups = compressed
+    ? [...headGroups, ...zeros, ...tailGroups]
+    : headGroups;
 
   const prefix = groups
     .slice(0, IPV6_PREFIX_HEXTETS)
@@ -164,40 +176,87 @@ function collectRootFields(selectionSet, fragments, visited, names) {
   return names;
 }
 
-/** The root field names of the operation that will run when it is a mutation, otherwise []. */
-export function mutationRootFields(document, operationName) {
+/**
+ * The type (`query`, `mutation`, `subscription`) and root field names of the operation that
+ * will run, or `{ type: null, fields: [] }` when there is none.
+ */
+export function operationRootFields(document, operationName) {
   const operation = getOperationAST(document, operationName);
 
-  if (operation?.operation !== OperationTypeNode.MUTATION) {
-    return [];
+  if (!operation) {
+    return { type: null, fields: [] };
   }
 
-  return collectRootFields(operation.selectionSet, fragmentsByName(document), new Set(), []);
+  return {
+    type: operation.operation,
+    fields: collectRootFields(
+      operation.selectionSet,
+      fragmentsByName(document),
+      new Set(),
+      [],
+    ),
+  };
+}
+
+/** The root field names of the operation that will run when it is a mutation, otherwise []. */
+export function mutationRootFields(document, operationName) {
+  const { type, fields } = operationRootFields(document, operationName);
+  return type === OperationTypeNode.MUTATION ? fields : [];
+}
+
+function countSensitive(type, fields) {
+  const names =
+    type === OperationTypeNode.MUTATION
+      ? SENSITIVE_MUTATIONS
+      : SENSITIVE_QUERIES;
+  return fields.filter((name) => names.includes(name)).length;
 }
 
 /**
- * Yoga plugin for the per-user mutation limits, which need the parsed operation. Each root
- * mutation field counts as one hit, so one request cannot run many mutations through
+ * Yoga plugin for the per-user mutation and sensitive limits, which need the parsed
+ * operation. Each root field counts as one hit, so one request cannot run many through
  * aliases. Anonymous requests are covered by the per-IP limit in createContext instead.
  */
 export function createRateLimitPlugin() {
   return {
     async onExecute({ args, setResultAndStopExecution }) {
       const context = args.contextValue;
-      const fields = mutationRootFields(args.document, args.operationName);
+      const { type, fields } = operationRootFields(
+        args.document,
+        args.operationName,
+      );
+      const isMutation = type === OperationTypeNode.MUTATION;
+      const sensitive = countSensitive(type, fields);
 
-      if (!context.userId || fields.length === 0) {
+      if (
+        !context.userId ||
+        (!isMutation && sensitive === 0) ||
+        fields.length === 0
+      ) {
         return;
       }
 
-      const sensitive = fields.filter((name) => SENSITIVE_MUTATIONS.includes(name)).length;
-      const common = { redis: context.redis, log: context.log, id: context.userId };
+      const common = {
+        redis: context.redis,
+        log: context.log,
+        id: context.userId,
+      };
 
       try {
-        await enforceRateLimit({ ...common, bucket: RATE_LIMITS.MUTATION, amount: fields.length });
+        if (isMutation) {
+          await enforceRateLimit({
+            ...common,
+            bucket: RATE_LIMITS.MUTATION,
+            amount: fields.length,
+          });
+        }
 
         if (sensitive > 0) {
-          await enforceRateLimit({ ...common, bucket: RATE_LIMITS.SENSITIVE_MUTATION, amount: sensitive });
+          await enforceRateLimit({
+            ...common,
+            bucket: RATE_LIMITS.SENSITIVE,
+            amount: sensitive,
+          });
         }
       } catch (error) {
         if (!(error instanceof TooManyRequestsError)) {
