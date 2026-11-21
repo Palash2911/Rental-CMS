@@ -18,6 +18,8 @@ import {
   isUniqueViolation,
   NotFoundError,
 } from "../../lib/errors.js";
+import { memberInvitationEmail } from "../../email/events.js";
+import { withEmails } from "../../email/queue.js";
 import { buildPageQuery, toPage } from "../../lib/pagination.js";
 import { lockOwnerAccount } from "../billing/subscriptionStore.js";
 import { INVITATION_EXPIRY_DAYS } from "../invitation/serviceInvitation.js";
@@ -294,7 +296,7 @@ async function insertInvitation(tx, data) {
  * an unexpired pending invitation, a full account or too many pending invitations.
  */
 export function createMemberInvitation(context, { actorId, ownerAccountId, email }) {
-  return context.prisma.$transaction(async (tx) => {
+  return withEmails(context.notifier, (emails) => context.prisma.$transaction(async (tx) => {
     await lockWritableAccount(tx, ownerAccountId);
     await assertStillPrimary(tx, ownerAccountId, actorId);
     await assertNotMemberEmail(tx, ownerAccountId, email);
@@ -321,8 +323,10 @@ export function createMemberInvitation(context, { actorId, ownerAccountId, email
       metadata: { ownerAccountId, expiresAt: invitation.expiresAt.toISOString() },
     });
 
+    emails.push(memberInvitationEmail({ memberInvitationId: invitation.id }));
+
     return toPublicMemberInvitation(invitation, now);
-  });
+  }));
 }
 
 function assertRespondable(invitation, now) {

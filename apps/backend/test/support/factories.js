@@ -14,6 +14,7 @@ import {
 import { newReceiptFileKey } from "../../src/graphql/receipts/receiptFiles.js";
 import { prisma } from "./db.js";
 import { redis as testRedis } from "./redis.js";
+import { recordingNotifier } from "./email.js";
 import { unexpectedStorageGateway } from "./storage.js";
 import { unexpectedStripeGateway } from "./stripe.js";
 
@@ -74,6 +75,7 @@ export function tokenContext({
   liveSuperAdmin = superAdmin,
   billingGateway = unexpectedStripeGateway(),
   storageGateway = unexpectedStorageGateway(),
+  notifier = recordingNotifier(),
   log = recordingLogger(),
   redis = testRedis,
 }) {
@@ -88,6 +90,7 @@ export function tokenContext({
     hasLiveSuperAdminClaim: async () => liveSuperAdmin,
     billingGateway,
     storageGateway,
+    notifier,
     redis,
   };
 }

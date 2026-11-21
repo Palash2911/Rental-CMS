@@ -6,6 +6,7 @@ import { runAccountDeletion } from "../../src/jobs/accountDeletion.js";
 import { BILLING_GRACE_DAYS, runBillingGrace } from "../../src/jobs/billingGrace.js";
 import { processStripeWebhook } from "../../src/stripe/webhook.js";
 import { prisma, prismaFailingTransactions, resetDatabase } from "../support/db.js";
+import { recordingNotifier } from "../support/email.js";
 import { contextFor, createOwnerAccount, createUser, firebaseUid, recordingLogger } from "../support/factories.js";
 import { expectData, run } from "../support/graphql.js";
 import {
@@ -44,7 +45,10 @@ function deletionLogs() {
 
 function runJob(options = {}, dependencies = {}) {
   const log = dependencies.log ?? recordingLogger();
-  return runBillingGrace({ prisma: dependencies.prisma ?? prisma, log }, { now: NOW, ...options });
+  return runBillingGrace(
+    { prisma: dependencies.prisma ?? prisma, notifier: dependencies.notifier ?? recordingNotifier(), log },
+    { now: NOW, ...options },
+  );
 }
 
 const SCHEDULE_DELETION = "mutation ($id: ID!) { scheduleOwnerAccountDeletion(id: $id) { status } }";
@@ -68,7 +72,7 @@ function deliverSubscription(stripeCustomerId, status) {
   const subscription = stripeSubscription({ customer: stripeCustomerId, status });
   const stripe = recordingStripeGateway({ subscriptions: new Map([[subscription.id, subscription]]) });
   const event = stripeEvent("customer.subscription.updated", subscription);
-  return processStripeWebhook({ prisma, gateway: stripe.gateway, webhookSecret: TEST_WEBHOOK_SECRET }, signWebhook(event));
+  return processStripeWebhook({ prisma, gateway: stripe.gateway, notifier: recordingNotifier(), webhookSecret: TEST_WEBHOOK_SECRET }, signWebhook(event));
 }
 
 beforeEach(resetDatabase);

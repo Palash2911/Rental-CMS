@@ -1,3 +1,5 @@
+import { accountReadOnlyEmail } from "../../email/events.js";
+import { withEmails } from "../../email/queue.js";
 import { OwnerAccountStatus } from "../../generated/prisma/enums.ts";
 import {
   ACTIVITY_ACTIONS,
@@ -31,7 +33,10 @@ import {
 const CHECKOUT_TRANSACTION_TIMEOUT_MS = 30_000;
 const MS_PER_SECOND = 1000;
 const CHECKOUT_MODE = "subscription";
-const CHECKOUT_SESSION_STATUS = Object.freeze({ OPEN: "open", COMPLETE: "complete" });
+const CHECKOUT_SESSION_STATUS = Object.freeze({
+  OPEN: "open",
+  COMPLETE: "complete",
+});
 const CHECKOUT_COMPLETED_REASON = "CHECKOUT_COMPLETED";
 
 // Tags our sessions in the Stripe Dashboard (integration_identifier, API 2026-03-25 and later).
@@ -47,12 +52,14 @@ const OWNER_ACCOUNT_SELECT = Object.freeze({
 
 const MESSAGES = Object.freeze({
   OWNER_ACCOUNT_NOT_FOUND: "Owner account not found.",
-  ENTERPRISE: "This account is on an enterprise plan, which is billed manually.",
+  ENTERPRISE:
+    "This account is on an enterprise plan, which is billed manually.",
   ALREADY_SUBSCRIBED:
     "This account already has a subscription. Use the billing portal to change it.",
   CHECKOUT_ALREADY_COMPLETED:
     "A checkout for this account has already completed. Use the billing portal once it is confirmed.",
-  NO_CUSTOMER: "This account has no billing details yet. Start a subscription first.",
+  NO_CUSTOMER:
+    "This account has no billing details yet. Start a subscription first.",
   ENTERPRISE_ALREADY_SET: "This account is already on the enterprise plan.",
   ENTERPRISE_NOT_SET: "This account is not on the enterprise plan.",
 });
@@ -80,7 +87,8 @@ function stripeId(value) {
  */
 export function mapStripeSubscription(stripeSubscription) {
   const items = stripeSubscription.items?.data ?? [];
-  const item = items.find((entry) => planForLookupKey(entry.price?.lookup_key)) ?? null;
+  const item =
+    items.find((entry) => planForLookupKey(entry.price?.lookup_key)) ?? null;
   const known = item ? planForLookupKey(item.price.lookup_key) : null;
 
   return {
@@ -115,7 +123,9 @@ export function toPublicBilling(accountStatus, subscription, activeTenants) {
     tenantLimit: entitlement.tenantLimit,
     enterprise,
     trialAvailable:
-      !enterprise && !subscription?.trialUsedAt && !subscription?.stripeSubscriptionId,
+      !enterprise &&
+      !subscription?.trialUsedAt &&
+      !subscription?.stripeSubscriptionId,
   };
 }
 
@@ -139,7 +149,11 @@ export async function loadBillingByAccount(prisma, ownerAccountIds) {
   const [accounts, counts] = await Promise.all([
     prisma.ownerAccount.findMany({
       where: { id: { in: ownerAccountIds } },
-      select: { id: true, status: true, subscription: { select: SUBSCRIPTION_SELECT } },
+      select: {
+        id: true,
+        status: true,
+        subscription: { select: SUBSCRIPTION_SELECT },
+      },
     }),
     countActiveTenantsByAccount(prisma, ownerAccountIds),
   ]);
@@ -147,7 +161,11 @@ export async function loadBillingByAccount(prisma, ownerAccountIds) {
   return new Map(
     accounts.map((account) => [
       account.id,
-      toPublicBilling(account.status, account.subscription, counts.get(account.id) ?? 0),
+      toPublicBilling(
+        account.status,
+        account.subscription,
+        counts.get(account.id) ?? 0,
+      ),
     ]),
   );
 }
@@ -168,7 +186,11 @@ async function closePendingSession(gateway, sessionId) {
   return false;
 }
 
-async function ensureCustomer(gateway, current, { ownerAccountId, email, accountName }) {
+async function ensureCustomer(
+  gateway,
+  current,
+  { ownerAccountId, email, accountName },
+) {
   if (current.stripeCustomerId) {
     return current.stripeCustomerId;
   }
@@ -241,7 +263,9 @@ export function startCheckout(
 
       // A missing price is a deployment problem, not a client error: masked as a 500.
       if (!priceId) {
-        throw new Error(`No active Stripe price has lookup key ${lookupKey}; run yarn stripe:sync-plans.`);
+        throw new Error(
+          `No active Stripe price has lookup key ${lookupKey}; run yarn stripe:sync-plans.`,
+        );
       }
 
       const withTrial = !current.trialUsedAt && !current.stripeSubscriptionId;
@@ -255,7 +279,10 @@ export function startCheckout(
 
       await tx.subscription.update({
         where: { ownerAccountId },
-        data: { stripeCustomerId: customerId, pendingCheckoutSessionId: session.id },
+        data: {
+          stripeCustomerId: customerId,
+          pendingCheckoutSessionId: session.id,
+        },
         select: { id: true },
       });
 
@@ -301,46 +328,64 @@ export async function openBillingPortal(context, { ownerAccountId }) {
  * updates readOnlySince. Returns the owner account. Throws NotFoundError for a missing
  * account and ConflictError when the flag already has that value.
  */
-export function setEnterprise(context, { actorId, ownerAccountId, enterprise }) {
-  return context.prisma.$transaction(async (tx) => {
-    const account = await lockOwnerAccount(tx, ownerAccountId);
+export function setEnterprise(
+  context,
+  { actorId, ownerAccountId, enterprise },
+) {
+  return withEmails(context.notifier, (emails) =>
+    context.prisma.$transaction(async (tx) => {
+      const account = await lockOwnerAccount(tx, ownerAccountId);
 
-    if (!account) {
-      throw new NotFoundError(MESSAGES.OWNER_ACCOUNT_NOT_FOUND);
-    }
+      if (!account) {
+        throw new NotFoundError(MESSAGES.OWNER_ACCOUNT_NOT_FOUND);
+      }
 
-    const current = await lockSubscription(tx, ownerAccountId);
+      const current = await lockSubscription(tx, ownerAccountId);
 
-    if (current.enterprise === enterprise) {
-      throw new ConflictError(
-        enterprise ? MESSAGES.ENTERPRISE_ALREADY_SET : MESSAGES.ENTERPRISE_NOT_SET,
-      );
-    }
+      if (current.enterprise === enterprise) {
+        throw new ConflictError(
+          enterprise
+            ? MESSAGES.ENTERPRISE_ALREADY_SET
+            : MESSAGES.ENTERPRISE_NOT_SET,
+        );
+      }
 
-    await tx.subscription.update({
-      where: { ownerAccountId },
-      data: { enterprise },
-      select: { id: true },
-    });
+      await tx.subscription.update({
+        where: { ownerAccountId },
+        data: { enterprise },
+        select: { id: true },
+      });
 
-    await logActivity(tx, {
-      entityType: ENTITY_TYPES.SUBSCRIPTION,
-      entityId: current.id,
-      action: enterprise ? ACTIVITY_ACTIONS.ENTERPRISE_SET : ACTIVITY_ACTIONS.ENTERPRISE_CLEARED,
-      ownerAccountId,
-      performedByUserId: actorId,
-      metadata: { ownerAccountId },
-    });
+      await logActivity(tx, {
+        entityType: ENTITY_TYPES.SUBSCRIPTION,
+        entityId: current.id,
+        action: enterprise
+          ? ACTIVITY_ACTIONS.ENTERPRISE_SET
+          : ACTIVITY_ACTIONS.ENTERPRISE_CLEARED,
+        ownerAccountId,
+        performedByUserId: actorId,
+        metadata: { ownerAccountId },
+      });
 
-    await syncReadOnlySince(tx, ownerAccountId);
+      const readOnly = await syncReadOnlySince(tx, ownerAccountId);
 
-    const updated = await tx.ownerAccount.findUnique({
-      where: { id: ownerAccountId },
-      select: OWNER_ACCOUNT_SELECT,
-    });
+      if (readOnly.becameReadOnly) {
+        emails.push(
+          accountReadOnlyEmail({
+            ownerAccountId,
+            readOnlySince: readOnly.readOnlySince,
+          }),
+        );
+      }
 
-    return toPublicOwnerAccount(updated);
-  });
+      const updated = await tx.ownerAccount.findUnique({
+        where: { id: ownerAccountId },
+        select: OWNER_ACCOUNT_SELECT,
+      });
+
+      return toPublicOwnerAccount(updated);
+    }),
+  );
 }
 
 /**
@@ -349,7 +394,10 @@ export function setEnterprise(context, { actorId, ownerAccountId, enterprise }) 
  * ended subscription cannot overwrite the current one. Records trialUsedAt the first time a
  * trial is seen. Returns the mapped values, or null when ignored. Call under lockOwnerAccount.
  */
-export async function applyStripeSubscription(tx, { ownerAccountId, stripeSubscription, now }) {
+export async function applyStripeSubscription(
+  tx,
+  { ownerAccountId, stripeSubscription, now },
+) {
   const current = await lockSubscription(tx, ownerAccountId);
   const mapped = mapStripeSubscription(stripeSubscription);
 
@@ -381,7 +429,10 @@ export async function applyStripeSubscription(tx, { ownerAccountId, stripeSubscr
  * it with no acting user. BLOCKED and PENDING_DELETION accounts are left alone: a super
  * admin's block always wins. Returns true when the account was approved.
  */
-export async function approveAfterCheckout(tx, { ownerAccountId, stripeStatus }) {
+export async function approveAfterCheckout(
+  tx,
+  { ownerAccountId, stripeStatus },
+) {
   if (!isFullAccessStatus(stripeStatus)) {
     return false;
   }
@@ -412,7 +463,10 @@ export async function approveAfterCheckout(tx, { ownerAccountId, stripeStatus })
 }
 
 /** Clears the pending Checkout session id when it is the given session. */
-export async function clearPendingSession(tx, { ownerAccountId, checkoutSessionId }) {
+export async function clearPendingSession(
+  tx,
+  { ownerAccountId, checkoutSessionId },
+) {
   await tx.subscription.updateMany({
     where: { ownerAccountId, pendingCheckoutSessionId: checkoutSessionId },
     data: { pendingCheckoutSessionId: null },

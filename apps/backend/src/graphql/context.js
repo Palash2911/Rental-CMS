@@ -89,12 +89,17 @@ function assertDependencies({
   hasLiveSuperAdminClaim,
   billingGateway,
   storageGateway,
+  notifier,
   redis,
   trustProxy,
 }) {
   assertBillingGateway(billingGateway);
   assertStorageGateway(storageGateway);
   assertRedis(redis);
+
+  if (notifier === null || typeof notifier?.enqueue !== "function") {
+    throw new TypeError("createContextFactory requires a notifier with enqueue.");
+  }
 
   if (trustProxy !== undefined && typeof trustProxy !== "boolean") {
     throw new TypeError("createContextFactory requires trustProxy to be a boolean.");
@@ -133,6 +138,7 @@ export function createContextFactory(dependencies) {
     hasLiveSuperAdminClaim,
     billingGateway,
     storageGateway,
+    notifier,
     redis,
     trustProxy = false,
   } = dependencies;
@@ -209,6 +215,7 @@ export function createContextFactory(dependencies) {
       hasLiveSuperAdminClaim,
       billingGateway,
       storageGateway,
+      notifier,
       redis,
     };
   };

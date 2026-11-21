@@ -4,6 +4,7 @@ import { beforeEach, describe, it } from "node:test";
 
 import { createStripeWebhookHandler, processStripeWebhook } from "../../src/stripe/webhook.js";
 import { prisma, resetDatabase } from "../support/db.js";
+import { recordingNotifier } from "../support/email.js";
 import { contextFor, createOwnerAccount, createUser } from "../support/factories.js";
 import { expectData, run } from "../support/graphql.js";
 import {
@@ -53,9 +54,9 @@ function checkoutSession({ id, customer, subscription, account, mode = "subscrip
   };
 }
 
-function deliver(gateway, event, { now } = {}) {
+function deliver(gateway, event, { now, notifier = recordingNotifier() } = {}) {
   return processStripeWebhook(
-    { prisma, gateway, webhookSecret: TEST_WEBHOOK_SECRET, ...(now ? { now: () => now } : {}) },
+    { prisma, gateway, notifier, webhookSecret: TEST_WEBHOOK_SECRET, ...(now ? { now: () => now } : {}) },
     signWebhook(event),
   );
 }
@@ -485,7 +486,7 @@ describe("HTTP handler", () => {
   }
 
   function handler(gateway, logger = { error() {} }) {
-    return createStripeWebhookHandler({ prisma, gateway, webhookSecret: TEST_WEBHOOK_SECRET, logger });
+    return createStripeWebhookHandler({ prisma, gateway, notifier: recordingNotifier(), webhookSecret: TEST_WEBHOOK_SECRET, logger });
   }
 
   it("processes a signed POST and returns JSON", async () => {

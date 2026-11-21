@@ -21,6 +21,10 @@ const BOOLEAN_FLAGS = Object.freeze({ TRUE: "true", FALSE: "false" });
 const S3_BUCKET_PATTERN = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const S3_REGION_PATTERN = /^[a-z0-9-]{1,32}$/;
 const S3_CREDENTIAL_MAX_LENGTH = 256;
+const RESEND_API_KEY_PATTERN = /^re_\S+$/;
+// "Rental CMS <notifications@example.com>" or a bare address; the address is checked by Zod.
+const EMAIL_FROM_PATTERN = /^(?:[^<>\r\n]{1,100} <([^<>\s]+)>|([^<>\s]+))$/;
+const DEFAULT_FRONTEND_URL = "http://localhost:3000";
 
 const VARIABLE_NAMES = Object.freeze([
   "NODE_ENV",
@@ -41,6 +45,10 @@ const VARIABLE_NAMES = Object.freeze([
   "S3_ACCESS_KEY_ID",
   "S3_SECRET_ACCESS_KEY",
   "S3_BUCKET",
+  "RESEND_API_KEY",
+  "EMAIL_FROM",
+  "EMAIL_DEV_REDIRECT",
+  "FRONTEND_URL",
 ]);
 
 const REQUIREMENTS = Object.freeze({
@@ -58,10 +66,16 @@ const REQUIREMENTS = Object.freeze({
   REDIS_URL: "must be a redis:// or rediss:// URL",
   TRUST_PROXY: `must be "${BOOLEAN_FLAGS.TRUE}" or "${BOOLEAN_FLAGS.FALSE}"`,
   S3_ENDPOINT: "must be an http:// or https:// URL",
-  S3_REGION: "must be a region name of lowercase letters, digits and hyphens, such as auto",
+  S3_REGION:
+    "must be a region name of lowercase letters, digits and hyphens, such as auto",
   S3_ACCESS_KEY_ID: `must be 1 to ${S3_CREDENTIAL_MAX_LENGTH} characters`,
   S3_SECRET_ACCESS_KEY: `must be 1 to ${S3_CREDENTIAL_MAX_LENGTH} characters`,
-  S3_BUCKET: "must be a valid bucket name (3 to 63 lowercase letters, digits, dots or hyphens)",
+  S3_BUCKET:
+    "must be a valid bucket name (3 to 63 lowercase letters, digits, dots or hyphens)",
+  RESEND_API_KEY: "must be a Resend API key (re_)",
+  EMAIL_FROM: 'must be an email address or "Name <address>"',
+  EMAIL_DEV_REDIRECT: "must be an email address",
+  FRONTEND_URL: "must be an http:// or https:// URL",
 });
 
 const MISSING_REASON = "is required";
@@ -86,12 +100,24 @@ const envSchema = z.object({
   STRIPE_CHECKOUT_CANCEL_URL: z.url({ protocol: HTTP_PROTOCOL }),
   STRIPE_PORTAL_RETURN_URL: z.url({ protocol: HTTP_PROTOCOL }),
   REDIS_URL: z.url({ protocol: REDIS_PROTOCOL }),
-  TRUST_PROXY: z.enum(Object.values(BOOLEAN_FLAGS)).default(BOOLEAN_FLAGS.FALSE),
+  TRUST_PROXY: z
+    .enum(Object.values(BOOLEAN_FLAGS))
+    .default(BOOLEAN_FLAGS.FALSE),
   S3_ENDPOINT: z.url({ protocol: HTTP_PROTOCOL }),
   S3_REGION: z.string().regex(S3_REGION_PATTERN),
   S3_ACCESS_KEY_ID: z.string().min(1).max(S3_CREDENTIAL_MAX_LENGTH),
   S3_SECRET_ACCESS_KEY: z.string().min(1).max(S3_CREDENTIAL_MAX_LENGTH),
   S3_BUCKET: z.string().regex(S3_BUCKET_PATTERN),
+  RESEND_API_KEY: z.string().regex(RESEND_API_KEY_PATTERN),
+  EMAIL_FROM: z
+    .string()
+    .regex(EMAIL_FROM_PATTERN)
+    .refine((value) => {
+      const [, named, bare] = value.match(EMAIL_FROM_PATTERN) ?? [];
+      return z.email().safeParse(named ?? bare).success;
+    }),
+  EMAIL_DEV_REDIRECT: z.email().optional(),
+  FRONTEND_URL: z.url({ protocol: HTTP_PROTOCOL }).optional(),
 });
 
 // Blank entries such as `PORT=` in an env file count as unset.
@@ -151,7 +177,35 @@ function stripeKeyProblems(rawEnv) {
     STRIPE_LIVE_KEY_PATTERN.test(key) &&
     rawEnv.NODE_ENV !== NODE_ENVS.PRODUCTION
   ) {
-    return ["STRIPE_SECRET_KEY must be a test-mode key unless NODE_ENV is production"];
+    return [
+      "STRIPE_SECRET_KEY must be a test-mode key unless NODE_ENV is production",
+    ];
+  }
+
+  return [];
+}
+
+// With a redirect set, every email goes to one address, so in production real users would
+// silently stop receiving theirs.
+function emailRedirectProblems(rawEnv) {
+  if (
+    rawEnv.EMAIL_DEV_REDIRECT !== undefined &&
+    rawEnv.NODE_ENV === NODE_ENVS.PRODUCTION
+  ) {
+    return ["EMAIL_DEV_REDIRECT must not be set when NODE_ENV is production"];
+  }
+
+  return [];
+}
+
+// Links in emails must point at the real frontend in production; elsewhere the local dev
+// server is the safe default.
+function frontendUrlProblems(rawEnv) {
+  if (
+    rawEnv.FRONTEND_URL === undefined &&
+    rawEnv.NODE_ENV === NODE_ENVS.PRODUCTION
+  ) {
+    return [`FRONTEND_URL ${MISSING_REASON} when NODE_ENV is production`];
   }
 
   return [];
@@ -170,6 +224,8 @@ export function parseConfig(source) {
     ...credentialProblems(rawEnv),
     ...emulatorProblems(rawEnv),
     ...stripeKeyProblems(rawEnv),
+    ...emailRedirectProblems(rawEnv),
+    ...frontendUrlProblems(rawEnv),
   ];
 
   if (problems.length > 0) {
@@ -202,6 +258,12 @@ export function parseConfig(source) {
       secretAccessKey: env.S3_SECRET_ACCESS_KEY,
       bucket: env.S3_BUCKET,
     }),
+    email: Object.freeze({
+      resendApiKey: env.RESEND_API_KEY,
+      from: env.EMAIL_FROM,
+      devRedirect: env.EMAIL_DEV_REDIRECT ?? null,
+    }),
+    frontendUrl: (env.FRONTEND_URL ?? DEFAULT_FRONTEND_URL).replace(/\/+$/, ""),
   });
 }
 

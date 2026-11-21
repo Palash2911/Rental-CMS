@@ -4,6 +4,7 @@ import { beforeEach, describe, it } from "node:test";
 import { READ_ONLY_MESSAGE } from "../../src/lib/entitlement.js";
 import { processStripeWebhook } from "../../src/stripe/webhook.js";
 import { prisma, resetDatabase } from "../support/db.js";
+import { recordingNotifier } from "../support/email.js";
 import {
   contextFor,
   createAssignment,
@@ -35,7 +36,7 @@ function activeOnAccount(account) {
 }
 
 function deliver(gateway, event) {
-  return processStripeWebhook({ prisma, gateway, webhookSecret: TEST_WEBHOOK_SECRET }, signWebhook(event));
+  return processStripeWebhook({ prisma, gateway, notifier: recordingNotifier(), webhookSecret: TEST_WEBHOOK_SECRET }, signWebhook(event));
 }
 
 // Settles webhook deliveries together; any rejection (a deadlock included) fails the test.

@@ -13,6 +13,8 @@ import {
   isRecordNotFound,
   NotFoundError,
 } from "../../lib/errors.js";
+import { accountReadOnlyEmail, deletionScheduledEmail } from "../../email/events.js";
+import { withEmails } from "../../email/queue.js";
 import { buildPageQuery, toPage } from "../../lib/pagination.js";
 import { syncReadOnlySince } from "../billing/subscriptionStore.js";
 
@@ -215,7 +217,7 @@ async function updateIfStatusUnchanged(tx, id, status, data) {
 }
 
 function applyTransition(context, transition, { actorId, id, metadata = {} }) {
-  return context.prisma.$transaction(async (tx) => {
+  return withEmails(context.notifier, (emails) => context.prisma.$transaction(async (tx) => {
     const current = await tx.ownerAccount.findUnique({
       where: { id },
       select: { status: true, statusBeforeDeletion: true, deletionExecutedAt: true },
@@ -231,14 +233,10 @@ function applyTransition(context, transition, { actorId, id, metadata = {} }) {
       throw new ConflictError(MESSAGES.INVALID_TRANSITION);
     }
 
-    const account = await updateIfStatusUnchanged(
-      tx,
-      id,
-      current.status,
-      transition.data(current),
-    );
+    const data = transition.data(current);
+    const account = await updateIfStatusUnchanged(tx, id, current.status, data);
 
-    await logActivity(tx, {
+    const log = await logActivity(tx, {
       entityType: ENTITY_TYPES.OWNER_ACCOUNT,
       entityId: id,
       action: transition.action,
@@ -249,10 +247,25 @@ function applyTransition(context, transition, { actorId, id, metadata = {} }) {
 
     // A status change can change billing entitlement (for example, approving an account
     // that has no subscription makes it read-only), so readOnlySince is kept in step.
-    await syncReadOnlySince(tx, id);
+    const readOnly = await syncReadOnlySince(tx, id);
+
+    if (data.status === PENDING_DELETION) {
+      emails.push(
+        deletionScheduledEmail({
+          activityLogId: log.id,
+          ownerAccountId: id,
+          deletionScheduledAt: data.deletionScheduledAt.toISOString(),
+          reason: data.deletionReason,
+        }),
+      );
+    }
+
+    if (readOnly.becameReadOnly) {
+      emails.push(accountReadOnlyEmail({ ownerAccountId: id, readOnlySince: readOnly.readOnlySince }));
+    }
 
     return toPublicOwnerAccount(account);
-  });
+  }));
 }
 
 /** PENDING to APPROVED. Throws NotFoundError or ConflictError for any other status. */

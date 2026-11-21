@@ -4,6 +4,7 @@ import { beforeEach, describe, it } from "node:test";
 import { runAccountDeletion } from "../../src/jobs/accountDeletion.js";
 import { processStripeWebhook } from "../../src/stripe/webhook.js";
 import { prisma, prismaFailingTransactions, resetDatabase } from "../support/db.js";
+import { recordingNotifier } from "../support/email.js";
 import {
   addMember,
   contextFor,
@@ -379,7 +380,7 @@ describe("tombstones", () => {
     canceled.metadata = { ownerAccountId: doomed.account.id };
     const event = stripeEvent("customer.subscription.deleted", canceled);
 
-    const result = await processStripeWebhook({ prisma, gateway: stripe.gateway, webhookSecret: TEST_WEBHOOK_SECRET }, signWebhook(event));
+    const result = await processStripeWebhook({ prisma, gateway: stripe.gateway, notifier: recordingNotifier(), webhookSecret: TEST_WEBHOOK_SECRET }, signWebhook(event));
 
     assert.equal(result.status, 200);
     assert.equal(result.body.ignored, true);

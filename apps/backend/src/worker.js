@@ -1,6 +1,9 @@
 import { Queue, Worker } from "bullmq";
 import { Logger } from "graphql-yoga";
 
+import { createEmailClient, createEmailGateway } from "./email/gateway.js";
+import { createEmailProcessor } from "./email/processor.js";
+import { createEmailNotifier, EMAIL_QUEUE } from "./email/queue.js";
 import { createJobProcessor, MAINTENANCE_QUEUE, registerJobSchedulers } from "./jobs/scheduler.js";
 import { config } from "./lib/config.js";
 import prisma from "./prisma.js";
@@ -25,12 +28,16 @@ const storageGateway = createStorageGateway(createStorageClient(config.s3), {
   bucket: config.s3.bucket,
 });
 
+const emailGateway = createEmailGateway(createEmailClient(config.email.resendApiKey));
+const emailQueue = new Queue(EMAIL_QUEUE, { connection });
+const notifier = createEmailNotifier(emailQueue, log);
+
 const queue = new Queue(MAINTENANCE_QUEUE, { connection });
 await registerJobSchedulers(queue);
 
 const worker = new Worker(
   MAINTENANCE_QUEUE,
-  createJobProcessor({ prisma, billingGateway, storageGateway, log }),
+  createJobProcessor({ prisma, billingGateway, storageGateway, notifier, log }),
   { connection, concurrency: WORKER_CONCURRENCY },
 );
 
@@ -38,7 +45,29 @@ worker.on("failed", (job, error) => {
   log.error({ err: error, job: job?.name, jobId: job?.id }, "Maintenance job failed.");
 });
 
-log.info({ queue: MAINTENANCE_QUEUE }, "Worker started.");
+// One send at a time, at most one per second: well under Resend's per-second limit, and a
+// 429 still pauses the queue through rateLimit (processor.js).
+const EMAIL_RATE = Object.freeze({ max: 1, duration: 1000 });
+
+const emailWorker = new Worker(
+  EMAIL_QUEUE,
+  createEmailProcessor({
+    prisma,
+    emailGateway,
+    from: config.email.from,
+    devRedirect: config.email.devRedirect,
+    frontendUrl: config.frontendUrl,
+    log,
+    rateLimit: (ms) => emailWorker.rateLimit(ms),
+  }),
+  { connection, concurrency: WORKER_CONCURRENCY, limiter: EMAIL_RATE },
+);
+
+emailWorker.on("failed", (job, error) => {
+  log.warn({ err: error, emailType: job?.name, emailKey: job?.id, attemptsMade: job?.attemptsMade }, "Email job attempt failed.");
+});
+
+log.info({ queues: [MAINTENANCE_QUEUE, EMAIL_QUEUE], emailDevRedirect: config.email.devRedirect !== null }, "Worker started.");
 
 // worker.close() waits for the running job to finish, so an account is never left halfway
 // (each account is one transaction anyway).
@@ -46,8 +75,8 @@ async function shutdown(signal) {
   log.info({ signal }, "Worker shutting down.");
   setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
 
-  await worker.close();
-  await queue.close();
+  await Promise.all([worker.close(), emailWorker.close()]);
+  await Promise.all([queue.close(), emailQueue.close()]);
   await Promise.all([prisma.$disconnect(), closeRedisClient(connection)]);
   process.exit(0);
 }

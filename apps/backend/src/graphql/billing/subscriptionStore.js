@@ -1,4 +1,7 @@
+import { OwnerAccountStatus } from "../../generated/prisma/enums.ts";
 import { ACCESS, computeEntitlement } from "../../lib/entitlement.js";
+
+const NOT_NEWLY_READ_ONLY = Object.freeze({ becameReadOnly: false, readOnlySince: null });
 
 /** Every Subscription column billing reads. */
 export const SUBSCRIPTION_SELECT = Object.freeze({
@@ -47,6 +50,8 @@ export async function lockSubscription(tx, ownerAccountId) {
   });
 }
 
+// Returns `{ becameReadOnly, readOnlySince }`: becameReadOnly is true only when this call set
+// readOnlySince on an APPROVED account, which is when the owner is emailed (after commit).
 /**
  * Keeps Subscription.readOnlySince in step with entitlement: set (once) when billing makes
  * the account read-only, cleared when access returns. The later grace-period and deletion
@@ -59,7 +64,7 @@ export async function syncReadOnlySince(tx, ownerAccountId, now = new Date()) {
   });
 
   if (!account) {
-    return;
+    return NOT_NEWLY_READ_ONLY;
   }
 
   const { access } = computeEntitlement(account.status, account.subscription);
@@ -73,11 +78,19 @@ export async function syncReadOnlySince(tx, ownerAccountId, now = new Date()) {
       update: { readOnlySince: now },
       select: { id: true },
     });
-  } else if (!readOnly && current) {
+
+    // Only a billing lapse on an APPROVED account is worth telling the owner about; read-only
+    // from a block or a scheduled deletion has its own explanation.
+    return { becameReadOnly: account.status === OwnerAccountStatus.APPROVED, readOnlySince: now };
+  }
+
+  if (!readOnly && current) {
     await tx.subscription.update({
       where: { ownerAccountId },
       data: { readOnlySince: null },
       select: { id: true },
     });
   }
+
+  return NOT_NEWLY_READ_ONLY;
 }

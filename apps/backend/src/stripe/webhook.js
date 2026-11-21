@@ -1,5 +1,7 @@
 import Stripe from "stripe";
 
+import { accountReadOnlyEmail, paymentFailedEmail, trialEndingEmail } from "../email/events.js";
+import { withEmails } from "../email/queue.js";
 import { DeletionReason, OwnerAccountStatus } from "../generated/prisma/enums.ts";
 import {
   applyStripeSubscription,
@@ -38,6 +40,7 @@ const EVENT_TYPES = Object.freeze({
   CHECKOUT_EXPIRED: "checkout.session.expired",
   INVOICE_PAID: "invoice.paid",
   INVOICE_PAYMENT_FAILED: "invoice.payment_failed",
+  TRIAL_WILL_END: "customer.subscription.trial_will_end",
 });
 
 const SUBSCRIPTION_EVENT_TYPES = Object.freeze([
@@ -204,7 +207,21 @@ async function cancelBillingDeletion(tx, { ownerAccountId, stripeStatus, eventId
   return true;
 }
 
-async function applyPlan(tx, { event, plan, now }) {
+// Stripe sends trial_will_end three days before the trial ends, and payment_failed once per
+// failed attempt; each event id is processed once, so it keys the email.
+function billingEmails({ event, ownerAccountId, applied }) {
+  if (event.type === EVENT_TYPES.TRIAL_WILL_END && applied?.trialEnd) {
+    return [trialEndingEmail({ stripeEventId: event.id, ownerAccountId, trialEnd: applied.trialEnd.toISOString() })];
+  }
+
+  if (event.type === EVENT_TYPES.INVOICE_PAYMENT_FAILED) {
+    return [paymentFailedEmail({ stripeEventId: event.id, ownerAccountId })];
+  }
+
+  return [];
+}
+
+async function applyPlan(tx, { event, plan, now, emails }) {
   const account = await lockOwnerAccount(tx, plan.ownerAccountId);
 
   if (!account || (await isDeletedAccount(tx, plan.ownerAccountId))) {
@@ -218,8 +235,10 @@ async function applyPlan(tx, { event, plan, now }) {
     });
   }
 
+  let applied = null;
+
   if (plan.stripeSubscription) {
-    const applied = await applyStripeSubscription(tx, {
+    applied = await applyStripeSubscription(tx, {
       ownerAccountId: plan.ownerAccountId,
       stripeSubscription: plan.stripeSubscription,
       now,
@@ -258,7 +277,14 @@ async function applyPlan(tx, { event, plan, now }) {
     }
   }
 
-  await syncReadOnlySince(tx, plan.ownerAccountId, now);
+  const readOnly = await syncReadOnlySince(tx, plan.ownerAccountId, now);
+
+  emails.push(...billingEmails({ event, ownerAccountId: plan.ownerAccountId, applied }));
+
+  if (readOnly.becameReadOnly) {
+    emails.push(accountReadOnlyEmail({ ownerAccountId: plan.ownerAccountId, readOnlySince: readOnly.readOnlySince }));
+  }
+
   return true;
 }
 
@@ -288,7 +314,7 @@ function verify(rawBody, signature, webhookSecret) {
  * Stripe is read before the transaction, so no lock is held during a network call.
  */
 export async function processStripeWebhook(
-  { prisma, gateway, webhookSecret, now = () => new Date() },
+  { prisma, gateway, notifier, webhookSecret, now = () => new Date() },
   { rawBody, signature },
 ) {
   const verified = verify(rawBody, signature, webhookSecret);
@@ -307,18 +333,20 @@ export async function processStripeWebhook(
   const plan = await planEvent({ prisma, gateway }, event);
 
   try {
-    const applied = await prisma.$transaction(async (tx) => {
-      await tx.stripeEvent.create({
-        data: { id: event.id, type: event.type },
-        select: { id: true },
-      });
+    const applied = await withEmails(notifier, (emails) =>
+      prisma.$transaction(async (tx) => {
+        await tx.stripeEvent.create({
+          data: { id: event.id, type: event.type },
+          select: { id: true },
+        });
 
-      if (!plan?.ownerAccountId) {
-        return false;
-      }
+        if (!plan?.ownerAccountId) {
+          return false;
+        }
 
-      return applyPlan(tx, { event, plan, now: now() });
-    });
+        return applyPlan(tx, { event, plan, now: now(), emails });
+      }),
+    );
 
     return { status: HTTP.OK, body: applied ? RESPONSES.PROCESSED : RESPONSES.IGNORED };
   } catch (error) {
@@ -359,7 +387,7 @@ function send(response, status, body) {
  * reaches signature verification byte for byte. Failures are logged with the error only,
  * never the payload or the signing secret.
  */
-export function createStripeWebhookHandler({ prisma, gateway, webhookSecret, logger = console }) {
+export function createStripeWebhookHandler({ prisma, gateway, notifier, webhookSecret, logger = console }) {
   return async function handleStripeWebhook(request, response) {
     if (request.method !== "POST") {
       response.setHeader("allow", "POST");
@@ -376,7 +404,7 @@ export function createStripeWebhookHandler({ prisma, gateway, webhookSecret, log
       }
 
       const result = await processStripeWebhook(
-        { prisma, gateway, webhookSecret },
+        { prisma, gateway, notifier, webhookSecret },
         { rawBody, signature: request.headers[SIGNATURE_HEADER] },
       );
       send(response, result.status, result.body);

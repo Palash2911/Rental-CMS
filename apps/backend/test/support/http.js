@@ -5,6 +5,7 @@ import { createApp } from "../../src/app.js";
 import { HTTP_STATUS, UnauthenticatedError } from "../../src/lib/errors.js";
 import { prisma } from "./db.js";
 import { redis as testRedis } from "./redis.js";
+import { recordingNotifier } from "./email.js";
 import { unexpectedStorageGateway } from "./storage.js";
 import { unexpectedStripeGateway } from "./stripe.js";
 
@@ -55,6 +56,7 @@ export async function startTestServer({
       hasLiveSuperAdminClaim: async () => false,
       billingGateway: unexpectedStripeGateway(),
       storageGateway: unexpectedStorageGateway(),
+      notifier: recordingNotifier(),
       redis,
       trustProxy,
     },

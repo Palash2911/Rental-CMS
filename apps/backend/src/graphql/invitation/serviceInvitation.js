@@ -22,6 +22,8 @@ import {
   isUniqueViolation,
   NotFoundError,
 } from "../../lib/errors.js";
+import { tenantInvitationEmail } from "../../email/events.js";
+import { withEmails } from "../../email/queue.js";
 import { buildPageQuery, toPage } from "../../lib/pagination.js";
 import {
   ACTIVE_ASSIGNMENT_STATUSES,
@@ -245,7 +247,7 @@ export function createInvitation(
   context,
   { actorId, ownerAccountId, houseId, email, leaseStartDate, leaseEndDate },
 ) {
-  return context.prisma.$transaction(async (tx) => {
+  return withEmails(context.notifier, (emails) => context.prisma.$transaction(async (tx) => {
     await lockHouse(tx, houseId);
     await assertHouseAcceptsTenants(tx, houseId);
     await assertNotActiveTenant(tx, houseId, email);
@@ -280,8 +282,10 @@ export function createInvitation(
       },
     });
 
+    emails.push(tenantInvitationEmail({ invitationId: invitation.id }));
+
     return toPublicInvitation(invitation, now);
-  });
+  }));
 }
 
 function assertRespondable(invitation, now) {

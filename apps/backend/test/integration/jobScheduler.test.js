@@ -11,6 +11,7 @@ import {
 } from "../../src/jobs/scheduler.js";
 import { closeRedisClient, createWorkerRedisClient } from "../../src/redis.js";
 import { prisma, resetDatabase } from "../support/db.js";
+import { recordingNotifier } from "../support/email.js";
 import { recordingLogger } from "../support/factories.js";
 import { unexpectedStripeGateway } from "../support/stripe.js";
 
@@ -65,7 +66,7 @@ describe("worker wiring", () => {
 
   it("dispatches a job by name to its service and refuses an unknown name", async () => {
     const log = recordingLogger();
-    const processJob = createJobProcessor({ prisma, billingGateway: unexpectedStripeGateway(), log });
+    const processJob = createJobProcessor({ prisma, billingGateway: unexpectedStripeGateway(), notifier: recordingNotifier(), log });
 
     const summary = await processJob({ id: "1", name: "cleanup" });
 

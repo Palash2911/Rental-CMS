@@ -18,6 +18,7 @@ function hasLiveSuperAdminClaim() {
 
 const billingGateway = unexpectedStripeGateway();
 const storageGateway = unexpectedStorageGateway();
+const notifier = Object.freeze({ enqueue: async () => {} });
 
 // A Redis stand-in that always reports the first hit of a window, so no limit is reached.
 // The real limits and Redis are covered by test/integration/rateLimit.test.js.
@@ -50,6 +51,7 @@ function buildContext({ verifyIdToken, authorization }) {
     hasLiveSuperAdminClaim,
     billingGateway,
     storageGateway,
+    notifier,
     redis,
   });
   return createContext({ request: requestWith(authorization) });
@@ -72,6 +74,7 @@ describe("createContextFactory", () => {
     hasLiveSuperAdminClaim,
     billingGateway,
     storageGateway,
+    notifier,
     redis,
   };
 
@@ -93,6 +96,9 @@ describe("createContextFactory", () => {
     ["storageGateway", undefined],
     ["storageGateway", null],
     ["storageGateway", { presignUpload: () => null }],
+    ["notifier", undefined],
+    ["notifier", null],
+    ["notifier", { add: () => null }],
     ["redis", undefined],
     ["redis", null],
     ["redis", { get: () => null }],
@@ -130,6 +136,7 @@ describe("createContext", () => {
         hasLiveSuperAdminClaim: undefined,
         billingGateway: undefined,
         storageGateway,
+        notifier,
         redis,
       },
     );

@@ -1,3 +1,5 @@
+import { deletionScheduledEmail } from "../email/events.js";
+import { withEmails } from "../email/queue.js";
 import {
   DeletionReason,
   OwnerAccountStatus,
@@ -90,9 +92,9 @@ async function stillEligible(tx, ownerAccountId, cutoff) {
   return { status: account.status, readOnlySince };
 }
 
-function scheduleDeletion(prisma, { cutoff, now }) {
+function scheduleDeletion(prisma, notifier, { cutoff, now }) {
   return (ownerAccountId) =>
-    prisma.$transaction(async (tx) => {
+    withEmails(notifier, (emails) => prisma.$transaction(async (tx) => {
       const eligible = await stillEligible(tx, ownerAccountId, cutoff);
 
       if (!eligible) {
@@ -112,7 +114,7 @@ function scheduleDeletion(prisma, { cutoff, now }) {
         select: { id: true },
       });
 
-      await logActivity(tx, {
+      const log = await logActivity(tx, {
         entityType: ENTITY_TYPES.OWNER_ACCOUNT,
         entityId: ownerAccountId,
         action: ACTIVITY_ACTIONS.DELETION_SCHEDULED,
@@ -129,8 +131,17 @@ function scheduleDeletion(prisma, { cutoff, now }) {
 
       await syncReadOnlySince(tx, ownerAccountId, now);
 
+      emails.push(
+        deletionScheduledEmail({
+          activityLogId: log.id,
+          ownerAccountId,
+          deletionScheduledAt: deletionScheduledAt.toISOString(),
+          reason: DeletionReason.BILLING_GRACE,
+        }),
+      );
+
       return OUTCOMES.DONE;
-    });
+    }));
 }
 
 /**
@@ -140,7 +151,7 @@ function scheduleDeletion(prisma, { cutoff, now }) {
  * transaction. Idempotent: a scheduled account is no longer selected. Returns the run summary.
  */
 export function runBillingGrace(
-  { prisma, log },
+  { prisma, notifier, log },
   { now = new Date(), batchSize = DEFAULT_BATCH_SIZE } = {},
 ) {
   const cutoff = daysBefore(now, BILLING_GRACE_DAYS);
@@ -150,6 +161,6 @@ export function runBillingGrace(
     log,
     batchSize,
     fetchBatch: fetchBatch(prisma, cutoff),
-    processAccount: scheduleDeletion(prisma, { cutoff, now }),
+    processAccount: scheduleDeletion(prisma, notifier, { cutoff, now }),
   });
 }

@@ -21,6 +21,8 @@ function validEnv(overrides = {}) {
     S3_ACCESS_KEY_ID: "SuperSecretAccessKeyId",
     S3_SECRET_ACCESS_KEY: "SuperSecretAccessKey",
     S3_BUCKET: "rental-cms-receipts",
+    RESEND_API_KEY: "re_SuperSecretResendKey",
+    EMAIL_FROM: "Rental CMS <notifications@example.test>",
     ...overrides,
   };
 }
@@ -140,7 +142,10 @@ describe("parseConfig", () => {
       assert.doesNotMatch(message, /SuperSecretLiveKey/);
     }
 
-    assert.equal(parseConfig(validEnv({ NODE_ENV: "production", STRIPE_SECRET_KEY: "rk_live_Key" })).isProduction, true);
+    assert.equal(
+      parseConfig(validEnv({ NODE_ENV: "production", FRONTEND_URL: "https://app.example.test", STRIPE_SECRET_KEY: "rk_live_Key" })).isProduction,
+      true,
+    );
   });
 
   it("never includes variable values in the error", () => {
@@ -191,5 +196,46 @@ describe("parseConfig", () => {
     assert.match(configError(validEnv({ S3_SECRET_ACCESS_KEY: "x".repeat(257) })), /S3_SECRET_ACCESS_KEY must be 1 to 256 characters/);
     assert.doesNotMatch(configError(validEnv({ S3_ACCESS_KEY_ID: "SuperSecret".repeat(30) })), /SuperSecret/);
     assert.equal(parseConfig(validEnv({ S3_ENDPOINT: "http://127.0.0.1:9000", S3_REGION: "us-east-1" })).s3.region, "us-east-1");
+  });
+
+  it("requires a Resend key and a sender, and exposes them as a frozen email group", () => {
+    const { email } = parseConfig(validEnv());
+
+    assert.equal(Object.isFrozen(email), true);
+    assert.deepEqual({ ...email }, {
+      resendApiKey: "re_SuperSecretResendKey",
+      from: "Rental CMS <notifications@example.test>",
+      devRedirect: null,
+    });
+    assert.match(configError(validEnv({ RESEND_API_KEY: undefined })), /RESEND_API_KEY is required/);
+    assert.match(configError(validEnv({ RESEND_API_KEY: "sk_test_x" })), /RESEND_API_KEY must be a Resend API key/);
+    assert.doesNotMatch(configError(validEnv({ RESEND_API_KEY: "SuperSecretWrongKey" })), /SuperSecretWrongKey/);
+    assert.match(configError(validEnv({ EMAIL_FROM: undefined })), /EMAIL_FROM is required/);
+  });
+
+  it("accepts a bare or named sender address and refuses anything else", () => {
+    assert.equal(parseConfig(validEnv({ EMAIL_FROM: "notifications@example.test" })).email.from, "notifications@example.test");
+
+    for (const from of ["Rental CMS", "Rental CMS <not-an-address>", "a@b.test\r\nBcc: x@y.test", "<a@b.test>"]) {
+      assert.match(configError(validEnv({ EMAIL_FROM: from })), /EMAIL_FROM must be an email address or "Name <address>"/, from);
+    }
+  });
+
+  it("accepts EMAIL_DEV_REDIRECT outside production and refuses it in production", () => {
+    assert.equal(parseConfig(validEnv({ EMAIL_DEV_REDIRECT: "me@example.test" })).email.devRedirect, "me@example.test");
+    assert.equal(parseConfig(validEnv({ NODE_ENV: "development", EMAIL_DEV_REDIRECT: "me@example.test" })).email.devRedirect, "me@example.test");
+    assert.match(configError(validEnv({ EMAIL_DEV_REDIRECT: "not an email" })), /EMAIL_DEV_REDIRECT must be an email address/);
+    assert.match(
+      configError(validEnv({ NODE_ENV: "production", FRONTEND_URL: "https://app.example.test", EMAIL_DEV_REDIRECT: "me@example.test" })),
+      /EMAIL_DEV_REDIRECT must not be set when NODE_ENV is production/,
+    );
+  });
+
+  it("defaults FRONTEND_URL to localhost outside production and requires it in production", () => {
+    assert.equal(parseConfig(validEnv()).frontendUrl, "http://localhost:3000");
+    assert.equal(parseConfig(validEnv({ NODE_ENV: "development" })).frontendUrl, "http://localhost:3000");
+    assert.equal(parseConfig(validEnv({ FRONTEND_URL: "https://app.example.test/" })).frontendUrl, "https://app.example.test");
+    assert.match(configError(validEnv({ NODE_ENV: "production" })), /FRONTEND_URL is required when NODE_ENV is production/);
+    assert.match(configError(validEnv({ FRONTEND_URL: "javascript:alert(1)" })), /FRONTEND_URL must be an http:\/\/ or https:\/\/ URL/);
   });
 });

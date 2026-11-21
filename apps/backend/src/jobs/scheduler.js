@@ -64,7 +64,7 @@ export async function registerJobSchedulers(queue) {
 
 /**
  * Returns the BullMQ processor: runs the job service named by `job.name` with
- * `dependencies` (`{ prisma, billingGateway, storageGateway, log }`), logs and returns its summary.
+ * `dependencies` (`{ prisma, billingGateway, storageGateway, notifier, log }`), logs and returns its summary.
  * Throws for an unknown job name, which BullMQ records as a failed job.
  */
 export function createJobProcessor(dependencies) {

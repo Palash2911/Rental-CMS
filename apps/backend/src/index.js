@@ -1,6 +1,9 @@
 import { createServer } from "node:http";
 
+import { Queue } from "bullmq";
+
 import { createApp } from "./app.js";
+import { createEmailNotifier, EMAIL_QUEUE } from "./email/queue.js";
 import {
   hasLiveSuperAdminClaim,
   verifyIdToken,
@@ -22,12 +25,6 @@ const storageGateway = createStorageGateway(createStorageClient(config.s3), {
   bucket: config.s3.bucket,
 });
 
-const handleStripeWebhook = createStripeWebhookHandler({
-  prisma,
-  gateway: billingGateway,
-  webhookSecret: config.stripeWebhookSecret,
-});
-
 // Deny by default: only development exposes GraphiQL and introspection; test and production keep both off.
 const isDevelopment = config.isDevelopment;
 
@@ -37,6 +34,21 @@ const redis = createRedisClient(config.redisUrl, {
   onError: (error) => app.yoga.log.warn({ err: error }, "Redis connection error."),
 });
 
+// The API only adds email jobs; the worker sends them. Producing on the shared fail-fast
+// client (no offline queue) is what BullMQ recommends for a Queue, and keeps a Redis outage
+// from holding requests (the notifier also bounds each add).
+const emailQueue = new Queue(EMAIL_QUEUE, { connection: redis });
+const notifier = createEmailNotifier(emailQueue, {
+  warn: (...args) => app.yoga.log.warn(...args),
+});
+
+const handleStripeWebhook = createStripeWebhookHandler({
+  prisma,
+  gateway: billingGateway,
+  notifier,
+  webhookSecret: config.stripeWebhookSecret,
+});
+
 const app = createApp({
   contextDependencies: {
     prisma,
@@ -44,6 +56,7 @@ const app = createApp({
     hasLiveSuperAdminClaim,
     billingGateway,
     storageGateway,
+    notifier,
     redis,
     trustProxy: config.trustProxy,
   },
@@ -62,6 +75,7 @@ server.listen(PORT, () => {
 async function shutdown(signal) {
   console.info(`${signal} received, shutting down...`);
   server.close(async () => {
+    await emailQueue.close();
     await Promise.all([prisma.$disconnect(), closeRedisClient(redis)]);
     process.exit(0);
   });
